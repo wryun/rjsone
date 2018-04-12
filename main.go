@@ -61,6 +61,9 @@ func run(args arguments) error {
 	}
 
 	context, err := loadContext(args.contextFiles, args.namedContextFiles)
+	if err != nil {
+		return err
+	}
 
 	output, err := jsone.Render(template, context)
 	if err != nil {
@@ -74,6 +77,10 @@ func run(args arguments) error {
 		byteOutput, err = json.Marshal(output)
 	} else {
 		byteOutput, err = json.MarshalIndent(output, "", strings.Repeat(" ", args.indentation))
+	}
+
+	if err != nil {
+		return err
 	}
 
 	os.Stdout.Write(byteOutput)
