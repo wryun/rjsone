@@ -77,7 +77,10 @@ func run(args arguments) error {
 	}
 
 	os.Stdout.Write(byteOutput)
-	os.Stdout.WriteString("\n")
+	if !args.yaml && args.indentation != 0 {
+		// MarshalIndent, sadly, doesn't print a newline at the end. Which I think it should.
+		os.Stdout.WriteString("\n")
+	}
 	return nil
 }
 
