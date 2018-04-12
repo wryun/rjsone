@@ -31,7 +31,7 @@ func main() {
 	}
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), description)
-		fmt.Fprintf(flag.CommandLine.Output(), "\nUsage: %s [options] [key:]contextfile [[key:]contextfile ...]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "\nUsage: %s [options] [[key:]contextfile ...]\n", os.Args[0])
 		flag.PrintDefaults()
 		fmt.Fprint(flag.CommandLine.Output(), "\n")
 	}
