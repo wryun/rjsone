@@ -4,14 +4,17 @@
 It's a safe and easy way to have templates of moderate complexity
 for configuration as code 'languages' like Kubernetes and CloudFormation.
 
-Context is provided by a list of filename arguments. The files are loaded as YAML/JSON
-by default and merged into the main context. You can specify a particular
-key to load a JSON file into using keyname:filename.yaml; if you specify two
-colons (i.e. keyname::filename.yaml) it will load it as a raw string. You can
-also use keyname: (or keyname::) without a filename to indicate that all
-subsequent files should be loaded as a list element into that key. If
-duplicate keys are found, later entries replace earlier at the top level only
-(no multi-level merging).
+Context is provided by a list of filename arguments. The files are loaded
+as YAML/JSON by default and merged into the main context. You can specify
+a particular key to load a JSON file into using keyname:filename.yaml;
+if you specify two colons (i.e. keyname::filename.yaml) it will load
+it as a raw string. If duplicate keys are found, later entries replace
+earlier at the top level only (no multi-level merging).
+
+You can also use keyname:.. (or keyname::..) to indicate that subsequent
+files without keys should be loaded as a list element into that key. If you
+instead use 'keyname:...', metadata information is loaded as well
+(filename, basename, content).
 
     Usage: rjsone [options] [key:]contextfile [[key:]contextfile ...]
       -i int

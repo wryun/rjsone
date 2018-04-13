@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/ghodss/yaml"
@@ -20,10 +21,13 @@ Context is provided by a list of filename arguments. The files are loaded
 as YAML/JSON by default and merged into the main context. You can specify
 a particular key to load a JSON file into using keyname:filename.yaml;
 if you specify two colons (i.e. keyname::filename.yaml) it will load
-it as a raw string. You can also use keyname: (or keyname::) without
-a filename to indicate that all subsequent files should be loaded as a
-list element into that key. If duplicate keys are found, later entries
-replace earlier at the top level only (no multi-level merging).
+it as a raw string. If duplicate keys are found, later entries replace
+earlier at the top level only (no multi-level merging).
+
+You can also use keyname:.. (or keyname::..) to indicate that subsequent
+files without keys should be loaded as a list element into that key. If you
+instead use 'keyname:...', metadata information is loaded as well
+(filename, basename, content).
 `
 
 type arguments struct {
@@ -96,8 +100,9 @@ func loadContext(contextOps []string) (map[string]interface{}, error) {
 	context := make(map[string]interface{})
 
 	var currentContextList struct {
-		raw bool
-		key string
+		raw      bool
+		key      string
+		metadata bool
 	}
 
 	for _, contextOp := range contextOps {
@@ -122,10 +127,20 @@ func loadContext(contextOps []string) (map[string]interface{}, error) {
 				if err != nil {
 					return nil, err
 				}
+				if currentContextList.metadata {
+					partialContext = map[string]interface{}{
+						"content":  partialContext,
+						"filename": filename,
+						"basename": path.Base(filename),
+					}
+				}
 				context[currentContextList.key] = append(context[currentContextList.key].([]interface{}), partialContext)
 			}
 		} else { // we have a key
 			key := splitContextOp[0]
+			if key == "" {
+				return nil, fmt.Errorf("must specify key before ':' in %q", contextOp)
+			}
 			raw := strings.HasPrefix(splitContextOp[1], ":")
 			var filename string
 			if raw {
@@ -133,13 +148,17 @@ func loadContext(contextOps []string) (map[string]interface{}, error) {
 			} else {
 				filename = splitContextOp[1]
 			}
+			if filename == "" {
+				return nil, fmt.Errorf("must specify filename or ellipsis after ':' in %q", contextOp)
+			}
 
-			if filename == "" { // if there's no filename, we must be doing a list
+			if filename == ".." || filename == "..." { // we have a list to follow - switch mode!
 				if _, ok := context[key].([]interface{}); !ok {
 					context[key] = make([]interface{}, 0)
 				}
 				currentContextList.key = key
 				currentContextList.raw = raw
+				currentContextList.metadata = filename == "..."
 			} else { // otherwise, we end any existing list and set this directly
 				currentContextList.key = ""
 				var partialContext interface{}

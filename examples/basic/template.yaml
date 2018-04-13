@@ -4,3 +4,5 @@ c: ${foobar}
 d: ${text}
 stuff:
   $eval: list
+fileinfo:
+  $eval: withfilename
