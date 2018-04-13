@@ -1,3 +1,6 @@
 a: ${foo}
 b: ${bar}
 c: ${foobar}
+d: ${text}
+stuff:
+  $eval: list

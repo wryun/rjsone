@@ -1,15 +1,24 @@
 `rjsone` (Render JSON-e) is a simple wrapper around the
 [JSON-e templating language](https://taskcluster.github.io/json-e/).
 
+It's a safe and easy way to have templates of moderate complexity
+for configuration as code 'languages' like Kubernetes and CloudFormation.
+
+Context is provided by a list of filename arguments. The files are loaded as YAML/JSON
+by default and merged into the main context. You can specify a particular
+key to load a JSON file into using keyname:filename.yaml; if you specify two
+colons (i.e. keyname::filename.yaml) it will load it as a raw string. You can
+also use keyname: (or keyname::) without a filename to indicate that all
+subsequent files should be loaded as a list element into that key. If
+duplicate keys are found, later entries replace earlier at the top level only
+(no multi-level merging).
+
     Usage: rjsone [options] [key:]contextfile [[key:]contextfile ...]
       -i int
             indentation level of JSON output; 0 means no pretty-printing (default 2)
       -t string
             file to use for template (default is -, which is stdin) (default "-")
       -y    output YAML rather than JSON (always reads YAML/JSON)
-
-It's a safe and easy way to have templates of moderate complexity
-for configuration as code 'languages' like Kubernetes and CloudFormation.
 
 # Getting it
 
@@ -33,7 +42,7 @@ I also want to be 'declarative configuration language' agnostic
 Before I discovered JSON-e, I wrote [o-stache](https://github.com/wryun/ostache/). There are a list of other options there, the most prominent of which is
 [Jsonnet](http://jsonnet.org/).
 
-# Stupidly simple usage example
+# Basic usage example
 
 Please see the JSON-e documentation for how to really use it.
 

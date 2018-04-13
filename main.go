@@ -15,23 +15,29 @@ import (
 const description = `rjsone is a simple wrapper around the JSON-e templating language.
 
 See: https://taskcluster.github.io/json-e/
+
+Context is provided by a list of filename arguments. The files are loaded
+as YAML/JSON by default and merged into the main context. You can specify
+a particular key to load a JSON file into using keyname:filename.yaml;
+if you specify two colons (i.e. keyname::filename.yaml) it will load
+it as a raw string. You can also use keyname: (or keyname::) without
+a filename to indicate that all subsequent files should be loaded as a
+list element into that key. If duplicate keys are found, later entries
+replace earlier at the top level only (no multi-level merging).
 `
 
 type arguments struct {
-	yaml              bool
-	indentation       int
-	templateFile      string
-	contextFiles      []string
-	namedContextFiles map[string]string
+	yaml         bool
+	indentation  int
+	templateFile string
+	contexts     []string
 }
 
 func main() {
-	args := arguments{
-		namedContextFiles: make(map[string]string),
-	}
+	var args arguments
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), description)
-		fmt.Fprintf(flag.CommandLine.Output(), "\nUsage: %s [options] [[key:]contextfile ...]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "\nUsage: %s [options] [[key:[:]]contextfile ...]\n", os.Args[0])
 		flag.PrintDefaults()
 		fmt.Fprint(flag.CommandLine.Output(), "\n")
 	}
@@ -39,14 +45,8 @@ func main() {
 	flag.BoolVar(&args.yaml, "y", false, "output YAML rather than JSON (always reads YAML/JSON)")
 	flag.IntVar(&args.indentation, "i", 2, "indentation of JSON output; 0 means no pretty-printing")
 	flag.Parse()
-	for _, context := range flag.Args() {
-		splitContext := strings.SplitN(context, ":", 2)
-		if len(splitContext) < 2 {
-			args.contextFiles = append(args.contextFiles, splitContext[0])
-		} else {
-			args.namedContextFiles[splitContext[0]] = splitContext[1]
-		}
-	}
+
+	args.contexts = flag.Args()
 
 	if err := run(args); err != nil {
 		fmt.Fprintf(flag.CommandLine.Output(), "Fatal error: %s\n", err)
@@ -55,12 +55,13 @@ func main() {
 }
 
 func run(args arguments) error {
-	template, err := loadTemplate(args.templateFile)
+	var template interface{}
+	err := readYamlFile(args.templateFile, &template)
 	if err != nil {
 		return err
 	}
 
-	context, err := loadContext(args.contextFiles, args.namedContextFiles)
+	context, err := loadContext(args.contexts)
 	if err != nil {
 		return err
 	}
@@ -91,51 +92,88 @@ func run(args arguments) error {
 	return nil
 }
 
-func loadContext(contextFiles []string, namedContextFiles map[string]string) (map[string]interface{}, error) {
+func loadContext(contextOps []string) (map[string]interface{}, error) {
 	context := make(map[string]interface{})
 
-	for _, filename := range contextFiles {
-		byteContext, err := ioutil.ReadFile(filename)
-		if err != nil {
-			return nil, err
-		}
-
-		err = yaml.Unmarshal(byteContext, &context)
-		if err != nil {
-			return nil, err
-		}
+	var currentContextList struct {
+		raw bool
+		key string
 	}
 
-	for key, filename := range namedContextFiles {
-		byteContext, err := ioutil.ReadFile(filename)
-		if err != nil {
-			return nil, err
-		}
+	for _, contextOp := range contextOps {
+		splitContextOp := strings.SplitN(contextOp, ":", 2)
+		if len(splitContextOp) < 2 { // i.e. we just have a file to load
+			filename := splitContextOp[0]
+			if currentContextList.key == "" { // we're not in a list - just load it in!
+				err := readYamlFile(filename, &context)
+				if err != nil {
+					return nil, err
+				}
+			} else { // ah, we're in a list; we should append it to the right key
+				var partialContext interface{}
+				var err error
+				if currentContextList.raw {
+					var rawBytes []byte
+					rawBytes, err = ioutil.ReadFile(filename)
+					partialContext = string(rawBytes)
+				} else {
+					err = readYamlFile(filename, &partialContext)
+				}
+				if err != nil {
+					return nil, err
+				}
+				context[currentContextList.key] = append(context[currentContextList.key].([]interface{}), partialContext)
+			}
+		} else { // we have a key
+			key := splitContextOp[0]
+			raw := strings.HasPrefix(splitContextOp[1], ":")
+			var filename string
+			if raw {
+				filename = splitContextOp[1][1:]
+			} else {
+				filename = splitContextOp[1]
+			}
 
-		var partialContext interface{}
-		err = yaml.Unmarshal(byteContext, &partialContext)
-		if err != nil {
-			return nil, err
+			if filename == "" { // if there's no filename, we must be doing a list
+				if _, ok := context[key].([]interface{}); !ok {
+					context[key] = make([]interface{}, 0)
+				}
+				currentContextList.key = key
+				currentContextList.raw = raw
+			} else { // otherwise, we end any existing list and set this directly
+				currentContextList.key = ""
+				var partialContext interface{}
+				var err error
+				if raw {
+					var rawBytes []byte
+					rawBytes, err = ioutil.ReadFile(filename)
+					partialContext = string(rawBytes)
+				} else {
+					err = readYamlFile(filename, &partialContext)
+				}
+				if err != nil {
+					return nil, err
+				}
+				context[key] = partialContext
+			}
 		}
-		context[key] = partialContext
 	}
 
 	return context, nil
 }
 
-func loadTemplate(templateFile string) (interface{}, error) {
-	var template interface{}
+func readYamlFile(filename string, o interface{}) error {
 	var byteTemplate []byte
 	var err error
-	if templateFile == "-" {
+	if filename == "-" {
 		byteTemplate, err = ioutil.ReadAll(os.Stdin)
 	} else {
-		byteTemplate, err = ioutil.ReadFile(templateFile)
+		byteTemplate, err = ioutil.ReadFile(filename)
 	}
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return template, yaml.Unmarshal(byteTemplate, &template)
+	return yaml.Unmarshal(byteTemplate, &o)
 }
