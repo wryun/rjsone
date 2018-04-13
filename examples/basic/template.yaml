@@ -1,3 +1,4 @@
+raw: ${rawparam}
 a: ${foo}
 b: ${bar}
 c: ${foobar}

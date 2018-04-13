@@ -17,15 +17,18 @@ const description = `rjsone is a simple wrapper around the JSON-e templating lan
 
 See: https://taskcluster.github.io/json-e/
 
-Context is provided by a list of filename arguments. The files are loaded
-as YAML/JSON by default and merged into the main context. You can specify
-a particular key to load a JSON file into using keyname:filename.yaml;
-if you specify two colons (i.e. keyname::filename.yaml) it will load
-it as a raw string. If duplicate keys are found, later entries replace
-earlier at the top level only (no multi-level merging).
+Context is usually provided by a list of arguments. By default,
+these are interpreted as files. However, if the 'filename' begins with
+a '+', the rest of the argument is interpreted as a raw string.
+Data is loaded as YAML/JSON by default and merged into the
+main context. You can specify a particular key to load a JSON
+file into using keyname:filename.yaml; if you specify two colons
+(i.e. keyname::filename.yaml) it will load it as a raw string.
+When duplicate keys are found, later entries replace earlier
+at the top level only (no multi-level merging).
 
 You can also use keyname:.. (or keyname::..) to indicate that subsequent
-files without keys should be loaded as a list element into that key. If you
+entries without keys should be loaded as a list element into that key. If you
 instead use 'keyname:...', metadata information is loaded as well
 (filename, basename, content).
 `
@@ -59,8 +62,7 @@ func main() {
 }
 
 func run(args arguments) error {
-	var template interface{}
-	err := readYamlFile(args.templateFile, &template)
+	template, err := readDataArgument(args.templateFile, false)
 	if err != nil {
 		return err
 	}
@@ -108,33 +110,37 @@ func loadContext(contextOps []string) (map[string]interface{}, error) {
 	for _, contextOp := range contextOps {
 		splitContextOp := strings.SplitN(contextOp, ":", 2)
 		if len(splitContextOp) < 2 { // i.e. we just have a file to load
-			filename := splitContextOp[0]
+			entry := splitContextOp[0]
 			if currentContextList.key == "" { // we're not in a list - just load it in!
-				err := readYamlFile(filename, &context)
+				data, err := readDataArgument(entry, false)
 				if err != nil {
 					return nil, err
 				}
-			} else { // ah, we're in a list; we should append it to the right key
-				var partialContext interface{}
-				var err error
-				if currentContextList.raw {
-					var rawBytes []byte
-					rawBytes, err = ioutil.ReadFile(filename)
-					partialContext = string(rawBytes)
-				} else {
-					err = readYamlFile(filename, &partialContext)
+				mapData, ok := data.(map[string]interface{})
+				if !ok {
+					return nil, fmt.Errorf("direct merge of %q failed - not an object, prefix with a key", entry)
 				}
+				for k, v := range mapData {
+					context[k] = v
+				}
+			} else { // ah, we're in a list; we should append it to the right key
+				data, err := readDataArgument(entry, currentContextList.raw)
 				if err != nil {
 					return nil, err
 				}
 				if currentContextList.metadata {
-					partialContext = map[string]interface{}{
-						"content":  partialContext,
-						"filename": filename,
-						"basename": path.Base(filename),
+					contextData := map[string]interface{}{
+						"content": data,
 					}
+
+					// hack...
+					if !strings.HasPrefix(entry, "+") {
+						contextData["filename"] = entry
+						contextData["basename"] = path.Base(entry)
+					}
+					data = contextData
 				}
-				context[currentContextList.key] = append(context[currentContextList.key].([]interface{}), partialContext)
+				context[currentContextList.key] = append(context[currentContextList.key].([]interface{}), data)
 			}
 		} else { // we have a key
 			key := splitContextOp[0]
@@ -142,38 +148,30 @@ func loadContext(contextOps []string) (map[string]interface{}, error) {
 				return nil, fmt.Errorf("must specify key before ':' in %q", contextOp)
 			}
 			raw := strings.HasPrefix(splitContextOp[1], ":")
-			var filename string
+			var entry string
 			if raw {
-				filename = splitContextOp[1][1:]
+				entry = splitContextOp[1][1:]
 			} else {
-				filename = splitContextOp[1]
+				entry = splitContextOp[1]
 			}
-			if filename == "" {
-				return nil, fmt.Errorf("must specify filename or ellipsis after ':' in %q", contextOp)
+			if entry == "" {
+				return nil, fmt.Errorf("must specify entry or ellipsis after ':' in %q", contextOp)
 			}
 
-			if filename == ".." || filename == "..." { // we have a list to follow - switch mode!
+			if entry == ".." || entry == "..." { // we have a list to follow - switch mode!
 				if _, ok := context[key].([]interface{}); !ok {
 					context[key] = make([]interface{}, 0)
 				}
 				currentContextList.key = key
 				currentContextList.raw = raw
-				currentContextList.metadata = filename == "..."
+				currentContextList.metadata = entry == "..."
 			} else { // otherwise, we end any existing list and set this directly
 				currentContextList.key = ""
-				var partialContext interface{}
-				var err error
-				if raw {
-					var rawBytes []byte
-					rawBytes, err = ioutil.ReadFile(filename)
-					partialContext = string(rawBytes)
-				} else {
-					err = readYamlFile(filename, &partialContext)
-				}
+				data, err := readDataArgument(entry, raw)
 				if err != nil {
 					return nil, err
 				}
-				context[key] = partialContext
+				context[key] = data
 			}
 		}
 	}
@@ -181,18 +179,26 @@ func loadContext(contextOps []string) (map[string]interface{}, error) {
 	return context, nil
 }
 
-func readYamlFile(filename string, o interface{}) error {
-	var byteTemplate []byte
+func readDataArgument(entry string, raw bool) (interface{}, error) {
+	var data []byte
 	var err error
-	if filename == "-" {
-		byteTemplate, err = ioutil.ReadAll(os.Stdin)
+	if strings.HasPrefix(entry, "+") {
+		data = []byte(entry[1:])
+	} else if entry == "-" {
+		data, err = ioutil.ReadAll(os.Stdin)
 	} else {
-		byteTemplate, err = ioutil.ReadFile(filename)
+		data, err = ioutil.ReadFile(entry)
 	}
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return yaml.Unmarshal(byteTemplate, &o)
+	if raw {
+		return string(data), nil
+	}
+
+	var o interface{}
+	err = yaml.Unmarshal(data, &o)
+	return o, err
 }
