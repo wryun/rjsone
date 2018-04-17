@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/ghodss/yaml"
@@ -37,6 +39,7 @@ type arguments struct {
 	yaml         bool
 	indentation  int
 	templateFile string
+	verbose      bool
 	contexts     []string
 }
 
@@ -50,6 +53,7 @@ func main() {
 	}
 	flag.StringVar(&args.templateFile, "t", "-", "file to use for template (- is stdin)")
 	flag.BoolVar(&args.yaml, "y", false, "output YAML rather than JSON (always reads YAML/JSON)")
+	flag.BoolVar(&args.verbose, "v", false, "show information about processing on stderr")
 	flag.IntVar(&args.indentation, "i", 2, "indentation of JSON output; 0 means no pretty-printing")
 	flag.Parse()
 
@@ -62,6 +66,7 @@ func main() {
 }
 
 func run(args arguments) error {
+	l := log.New(os.Stderr, "", 0)
 	template, err := readDataArgument(args.templateFile, false)
 	if err != nil {
 		return err
@@ -70,6 +75,15 @@ func run(args arguments) error {
 	context, err := loadContext(args.contexts)
 	if err != nil {
 		return err
+	}
+
+	if args.verbose {
+		l.Println("Calculated context:")
+		output, err := yaml.Marshal(context)
+		if err != nil {
+			return err
+		}
+		l.Println(string(output))
 	}
 
 	output, err := jsone.Render(template, context)
@@ -84,18 +98,16 @@ func run(args arguments) error {
 		byteOutput, err = json.Marshal(output)
 	} else {
 		byteOutput, err = json.MarshalIndent(output, "", strings.Repeat(" ", args.indentation))
+		// MarshalIndent, sadly, doesn't add a newline at the end. Which I think it should.
+		byteOutput = append(byteOutput, 0x0a)
 	}
 
 	if err != nil {
 		return err
 	}
 
-	os.Stdout.Write(byteOutput)
-	if !args.yaml && args.indentation != 0 {
-		// MarshalIndent, sadly, doesn't print a newline at the end. Which I think it should.
-		os.Stdout.WriteString("\n")
-	}
-	return nil
+	_, err = os.Stdout.Write(byteOutput)
+	return err
 }
 
 func loadContext(contextOps []string) (map[string]interface{}, error) {
@@ -134,9 +146,11 @@ func loadContext(contextOps []string) (map[string]interface{}, error) {
 					}
 
 					// hack...
+					basename := path.Base(entry)
 					if !strings.HasPrefix(entry, "+") {
 						contextData["filename"] = entry
-						contextData["basename"] = path.Base(entry)
+						contextData["basename"] = basename
+						contextData["name"] = strings.TrimSuffix(basename, filepath.Ext(basename))
 					}
 					data = contextData
 				}

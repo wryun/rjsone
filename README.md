@@ -4,15 +4,18 @@
 It's a safe and easy way to have templates of moderate complexity
 for configuration as code 'languages' like Kubernetes and CloudFormation.
 
-Context is provided by a list of filename arguments. The files are loaded
-as YAML/JSON by default and merged into the main context. You can specify
-a particular key to load a JSON file into using keyname:filename.yaml;
-if you specify two colons (i.e. keyname::filename.yaml) it will load
-it as a raw string. If duplicate keys are found, later entries replace
-earlier at the top level only (no multi-level merging).
+Context is usually provided by a list of arguments. By default,
+these are interpreted as files. However, if the 'filename' begins with
+a '+', the rest of the argument is interpreted as a raw string.
+Data is loaded as YAML/JSON by default and merged into the
+main context. You can specify a particular key to load a JSON
+file into using keyname:filename.yaml; if you specify two colons
+(i.e. keyname::filename.yaml) it will load it as a raw string.
+When duplicate keys are found, later entries replace earlier
+at the top level only (no multi-level merging).
 
 You can also use keyname:.. (or keyname::..) to indicate that subsequent
-files without keys should be loaded as a list element into that key. If you
+entries without keys should be loaded as a list element into that key. If you
 instead use 'keyname:...', metadata information is loaded as well
 (filename, basename, content).
 
