@@ -19,6 +19,20 @@ entries without keys should be loaded as a list element into that key. If you
 instead use 'keyname:...', metadata information is loaded as well
 (filename, basename, content).
 
+You can also use keyname:.. (or keyname::..) to indicate that subsequent
+entries without keys should be loaded as a list element into that key. If you
+instead use 'keyname:...', metadata information is loaded as well
+(filename, basename, content).
+
+For complex applications, single argument functions can be added by prefixing
+the filename with a '-' (or a '--' for raw string input). For example:
+
+    b64decode::--'base64 -d'
+
+This adds a base64 decode function to the context which accepts a string
+as input and outputs a string. Conversely, if you use :-, this accepts
+JSON as input and outputs JSON or YAML.
+
     Usage: rjsone [options] [key:]contextfile [[key:]contextfile ...]
       -i int
             indentation level of JSON output; 0 means no pretty-printing (default 2)
