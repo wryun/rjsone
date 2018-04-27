@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -11,8 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ghodss/yaml"
 	jsone "github.com/taskcluster/json-e"
+	// Quick hack of ghodss YAML to expose a new method
+	yaml_ghodss "github.com/wryun/yaml-1"
+	yaml_v2 "gopkg.in/yaml.v2"
 )
 
 const description = `rjsone is a simple wrapper around the JSON-e templating language.
@@ -67,11 +70,6 @@ func main() {
 
 func run(args arguments) error {
 	l := log.New(os.Stderr, "", 0)
-	template, err := readDataArgument(args.templateFile, false)
-	if err != nil {
-		return err
-	}
-
 	context, err := loadContext(args.contexts)
 	if err != nil {
 		return err
@@ -79,35 +77,75 @@ func run(args arguments) error {
 
 	if args.verbose {
 		l.Println("Calculated context:")
-		output, err := yaml.Marshal(context)
+		output, err := yaml_ghodss.Marshal(context)
 		if err != nil {
 			return err
 		}
 		l.Println(string(output))
 	}
 
-	output, err := jsone.Render(template, context)
-	if err != nil {
-		return err
-	}
-
-	var byteOutput []byte
-	if args.yaml {
-		byteOutput, err = yaml.Marshal(output)
-	} else if args.indentation == 0 {
-		byteOutput, err = json.Marshal(output)
+	var input io.Reader
+	if args.templateFile == "-" {
+		input = os.Stdin
 	} else {
-		byteOutput, err = json.MarshalIndent(output, "", strings.Repeat(" ", args.indentation))
-		// MarshalIndent, sadly, doesn't add a newline at the end. Which I think it should.
-		byteOutput = append(byteOutput, 0x0a)
+		input, err = os.Open(args.templateFile)
+		if err != nil {
+			return err
+		}
 	}
 
-	if err != nil {
-		return err
+	var encoder *yaml_v2.Encoder
+	if args.yaml {
+		encoder = yaml_v2.NewEncoder(os.Stdout)
+		defer encoder.Close()
 	}
+	decoder := yaml_v2.NewDecoder(input)
+	for {
+		// json-e wants types as output by json, so we have to reach
+		// into the annoying ghodss/yaml code to do the type conversion.
+		// We can't use it directly (trivially), because it doesn't have
+		// multi-document support.
+		var passthroughTemplate interface{}
+		err := decoder.Decode(&passthroughTemplate)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var template interface{}
+		err = yaml_ghodss.YAMLTypesToJSONTypes(passthroughTemplate, &template)
+		if err != nil {
+			return err
+		}
 
-	_, err = os.Stdout.Write(byteOutput)
-	return err
+		output, err := jsone.Render(template, context)
+		if err != nil {
+			return err
+		}
+
+		if args.yaml {
+			err = encoder.Encode(output)
+		} else {
+			var byteOutput []byte
+			if args.indentation == 0 {
+				byteOutput, err = json.Marshal(output)
+			} else {
+				byteOutput, err = json.MarshalIndent(output, "", strings.Repeat(" ", args.indentation))
+				// MarshalIndent, sadly, doesn't add a newline at the end. Which I think it should.
+				byteOutput = append(byteOutput, 0x0a)
+			}
+
+			if err != nil {
+				return err
+			}
+
+			_, err = os.Stdout.Write(byteOutput)
+			if err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func loadContext(contextOps []string) (map[string]interface{}, error) {
@@ -213,6 +251,6 @@ func readDataArgument(entry string, raw bool) (interface{}, error) {
 	}
 
 	var o interface{}
-	err = yaml.Unmarshal(data, &o)
+	err = yaml_ghodss.Unmarshal(data, &o)
 	return o, err
 }
