@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,11 +9,13 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 
 	jsone "github.com/taskcluster/json-e"
+	jsone_interpreter "github.com/taskcluster/json-e/interpreter"
 	// Quick hack of ghodss YAML to expose a new method
 	yaml_ghodss "github.com/wryun/yaml-1"
 	yaml_v2 "gopkg.in/yaml.v2"
@@ -36,6 +39,15 @@ You can also use keyname:.. (or keyname::..) to indicate that subsequent
 entries without keys should be loaded as a list element into that key. If you
 instead use 'keyname:...', metadata information is loaded as well
 (filename, basename, content).
+
+For complex applications, single argument functions can be added by prefixing
+the filename with a '-' (or a '--' for raw string input). For example:
+
+    b64decode::--'base64 -d'
+	
+This adds a base64 decode function to the context which accepts a string
+as input and outputs a string. Conversely, if you use :-, this accepts
+JSON as input and outputs JSON or YAML.
 `
 
 type arguments struct {
@@ -238,6 +250,13 @@ func readDataArgument(entry string, raw bool) (interface{}, error) {
 		data = []byte(entry[1:])
 	} else if entry == "-" {
 		data, err = ioutil.ReadAll(os.Stdin)
+	} else if strings.HasPrefix(entry, "-") {
+		entry := entry[1:]
+		if strings.HasPrefix(entry, "-") {
+			return buildFunction(entry[1:], raw, true), nil
+		} else {
+			return buildFunction(entry, raw, false), nil
+		}
 	} else {
 		data, err = ioutil.ReadFile(entry)
 	}
@@ -253,4 +272,77 @@ func readDataArgument(entry string, raw bool) (interface{}, error) {
 	var o interface{}
 	err = yaml_ghodss.Unmarshal(data, &o)
 	return o, err
+}
+
+// Builds a function out of a command that does stdin/stdout
+func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
+	var f interface{}
+	commandArray := strings.Split(commandString, " ")
+
+	if rawInput && rawOutput {
+		f = func(s string) (string, error) {
+			command := exec.Command(commandArray[0], commandArray[1:]...)
+			command.Stderr = os.Stderr
+			command.Stdin = bytes.NewReader([]byte(s))
+			stdoutBytes, err := command.Output()
+			if err != nil {
+				return "", err
+			}
+			return string(stdoutBytes), nil
+		}
+	} else if rawInput {
+		f = func(s string) (interface{}, error) {
+			command := exec.Command(commandArray[0], commandArray[1:]...)
+			command.Stderr = os.Stderr
+			command.Stdin = bytes.NewReader([]byte(s))
+			stdoutBytes, err := command.Output()
+			if err != nil {
+				return nil, err
+			}
+
+			var o interface{}
+			err = yaml_ghodss.Unmarshal(stdoutBytes, &o)
+			if err != nil {
+				return nil, err
+			}
+			return o, nil
+		}
+	} else if rawOutput {
+		f = func(v interface{}) (string, error) {
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				return "", err
+			}
+
+			command := exec.Command(commandArray[0], commandArray[1:]...)
+			command.Stderr = os.Stderr
+			command.Stdin = bytes.NewReader(jsonBytes)
+			stdoutBytes, err := command.Output()
+			return string(stdoutBytes), err
+		}
+	} else {
+		f = func(v interface{}) (interface{}, error) {
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				return "", err
+			}
+
+			command := exec.Command(commandArray[0], commandArray[1:]...)
+			command.Stderr = os.Stderr
+			command.Stdin = bytes.NewReader(jsonBytes)
+			stdoutBytes, err := command.Output()
+			if err != nil {
+				return nil, err
+			}
+
+			var o interface{}
+			err = yaml_ghodss.Unmarshal(stdoutBytes, &o)
+			if err != nil {
+				return nil, err
+			}
+			return v, nil
+		}
+	}
+
+	return jsone_interpreter.WrapFunction(f)
 }
