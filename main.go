@@ -73,15 +73,15 @@ func main() {
 	flag.Parse()
 
 	args.contexts = flag.Args()
+	logger := log.New(os.Stderr, "", 0)
 
-	if err := run(args); err != nil {
+	if err := run(logger, os.Stdout, args); err != nil {
 		fmt.Fprintf(flag.CommandLine.Output(), "Fatal error: %s\n", err)
 		os.Exit(2)
 	}
 }
 
-func run(args arguments) error {
-	l := log.New(os.Stderr, "", 0)
+func run(l *log.Logger, out io.Writer, args arguments) error {
 	context, err := loadContext(args.contexts)
 	if err != nil {
 		return err
@@ -108,7 +108,7 @@ func run(args arguments) error {
 
 	var encoder *yaml_v2.Encoder
 	if args.yaml {
-		encoder = yaml_v2.NewEncoder(os.Stdout)
+		encoder = yaml_v2.NewEncoder(out)
 		defer encoder.Close()
 	}
 	decoder := yaml_v2.NewDecoder(input)
@@ -152,7 +152,7 @@ func run(args arguments) error {
 				return err
 			}
 
-			_, err = os.Stdout.Write(byteOutput)
+			_, err = out.Write(byteOutput)
 			if err != nil {
 				return err
 			}
