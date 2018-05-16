@@ -19,11 +19,6 @@ entries without keys should be loaded as a list element into that key. If you
 instead use 'keyname:...', metadata information is loaded as well
 (filename, basename, content).
 
-You can also use keyname:.. (or keyname::..) to indicate that subsequent
-entries without keys should be loaded as a list element into that key. If you
-instead use 'keyname:...', metadata information is loaded as well
-(filename, basename, content).
-
 For complex applications, single argument functions can be added by prefixing
 the filename with a '-' (or a '--' for raw string input). For example:
 
@@ -88,8 +83,19 @@ bar: nothing
 everything
 ```
 
+Use YAML files for context:
+
 ```sh
 $ rjsone -y -t template.yaml context1.yaml context2.yaml foobar:named.yaml
+a: something
+b: nothing
+c: everything
+```
+
+Use context on command line (:: rather than : means interpret as raw string
+not as JSON/YAML, and + means treat it as a string rather than a filename):
+```sh
+$ rjsone -y -t template.yaml foo::+something bar::+nothing foobar::+everything
 a: something
 b: nothing
 c: everything
