@@ -1,0 +1,22 @@
+load("@com_github_wryun_rjsone//:rjsone.bzl", "rjsone")
+
+filegroup(
+    name = "list",
+    srcs = [
+        "context1.yaml",
+        "context2.yaml",
+    ],
+)
+
+rjsone(
+    name = "example1",
+    contexts = [
+        "context1.yaml",
+        "context2.yaml",
+    ],
+    keyed_contexts = {
+        ":list": "list",
+        "named.yaml": "foobar",
+    },
+    template = "template_bazel.yaml",
+)
