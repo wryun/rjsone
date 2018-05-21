@@ -1,5 +1,11 @@
 /rjsone
 
+/bazel-bin
+/bazel-genfiles
+/bazel-out
+/bazel-rjsone
+/bazel-testlogs
+
 # dep stuff
 /vendor/
 /Gopkg.lock

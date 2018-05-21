@@ -1,0 +1,40 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@bazel_gazelle//:def.bzl", "gazelle")
+
+gazelle(
+    name = "gazelle",
+    external = "external",
+    prefix = "github.com/wryun/rjsone",
+)
+
+gazelle(
+    name = "gazelle_fix",
+    command = "fix",
+    external = "external",
+    prefix = "github.com/wryun/rjsone",
+)
+
+go_binary(
+    name = "rjsone",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "go_default_library",
+    srcs = ["main.go"],
+    importpath = "github.com/wryun/rjsone",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_taskcluster_json_e//:go_default_library",
+        "@com_github_taskcluster_json_e//interpreter:go_default_library",
+        "@com_github_wryun_yaml_1//:go_default_library",
+        "@in_gopkg_yaml_v2//:go_default_library",
+    ],
+)
+
+sh_binary(
+    name = "runner",
+    srcs = ["runner.sh"],
+    visibility = ["//visibility:public"],
+)
