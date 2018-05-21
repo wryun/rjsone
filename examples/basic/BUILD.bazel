@@ -1,4 +1,4 @@
-load("@com_github_wryun_rjsone//:rjsone.bzl", "rjsone")
+load("@com_github_wryun_rjsone//:def.bzl", "rjsone")
 
 filegroup(
     name = "list",
