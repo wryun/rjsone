@@ -6,6 +6,13 @@
 It's a safe and easy way to have templates of moderate complexity
 for configuration as code 'languages' like Kubernetes and CloudFormation.
 
+    Usage: rjsone [options] [[key:[:]][+]contextfile ...]
+      -i int
+            indentation level of JSON output; 0 means no pretty-printing (default 2)
+      -t string
+            file to use for template (default is -, which is stdin) (default "-")
+      -y    output YAML rather than JSON (always reads YAML/JSON)
+
 Context is usually provided by a list of arguments. By default,
 these are interpreted as files. Data is loaded as YAML/JSON by default
 and merged into the main context.
@@ -34,20 +41,10 @@ For example, you could use this function like b64decode([], 'Zm9vCg==').
 Conversely, if you use :-, your command must accept JSON as stdin and
 output JSON or YAML.
 
-    Usage: rjsone [options] [[key:[:]][+]contextfile ...]
-      -i int
-            indentation level of JSON output; 0 means no pretty-printing (default 2)
-      -t string
-            file to use for template (default is -, which is stdin) (default "-")
-      -y    output YAML rather than JSON (always reads YAML/JSON)
-
 # Getting it
 
-Grab the latest binary from:
-
-    https://github.com/wryun/rjsone/releases
-
-Or, to build it yourself:
+[Grab the latest binary](https://github.com/wryun/rjsone/releases) or
+build it yourself:
 
     go get github.com/wryun/rjsone
 
@@ -110,3 +107,6 @@ a: something
 b: nothing
 c: everything
 ```
+
+*Warning*: if you need to insert anything that's not a pure string, you'll
+need to understand JSON-e's '$eval' operator.
