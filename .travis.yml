@@ -1,14 +1,32 @@
 language: go
+
 go:
-  - "1.10.x"
+- 1.10.x
 
 env:
-  - DEP_VERSION="0.4.1"
+- DEP_VERSION="0.4.1"
 
 before_install:
-  - curl -L -s https://github.com/golang/dep/releases/download/v${DEP_VERSION}/dep-linux-amd64 -o $GOPATH/bin/dep
-  - chmod +x $GOPATH/bin/dep
+- curl -L -s https://github.com/golang/dep/releases/download/v${DEP_VERSION}/dep-linux-amd64
+  -o $GOPATH/bin/dep
+- chmod +x $GOPATH/bin/dep
+- go get github.com/mitchellh/gox
 
-install: dep ensure && go build
+install:
+- dep ensure
 
-script: ./test.sh testdata/*
+script:
+- go build
+- ./test.sh testdata/*
+- if [ -n "$TRAVIS_TAG" ]; then gox; fi
+
+deploy:
+  provider: releases
+  api_key:
+    secure: FhdaRLKhLICahJR1QHt9KCD12ukAP6uWdxreSFAv3+i95tFXJmATDggmP1OXEW5LmD7W/MJ0PD4UtlljoDZwsOrhdEBDdiJPNkwug8fdfcvLOmIOgjsZVzNf3ZZGue9isEcgAxm63xCmTpAIWAj+UC4WlUJfGAFTIDCRRsMJd202uzXuRmDwk3fUF+HNoOctxVAObmG0GrUstbVM+d/pfrT8v1epyN2MNM4KxoSk+yEtYs8ejtrB+ShPQHT8+AvFLBvVBBqI3l+SlEHg9cerFSuAGFyGgUMHqGJDuIVFSzXLh+RHZhd6JeY85Wep8YS7EPM/3BPwZpl2GB58z39AVLC8FxXoVjDo1mM97VdmV27EyXfGkRaVpz4cJyBgN+wKTntbwuxH05Hu2hvM8n4Oj6uP6FSd02xZ6sMr/iFlPwqRXlSNPwiTO0zFA2z3CRqpjZ48e3GDBvB1e7/eV5RLN2vkLvMF/MiW+F7tG4I93RYjR33GheyK20BNYf8qrIBv6LNtIOfEO6pYKItiU2gII6igchRDcaXlWoKuTHXyzQyzrR3jjI//8UanAfHBk1e1DtghBgBFQmr3h1S5osvjvIafkinrz5tWFjqbp788Sf29qCHnJbje7X+MW+QJfws3cHXLxjknlCbYnt9i7fPfnnvoowULfdUTPSFIfcCsXDY=
+  file_glob: true
+  file: rjsone_*
+  skip_cleanup: true
+  on:
+    repo: wryun/rjsone
+    tags: true
