@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/wryun/rjsone.svg?branch=master)](https://travis-ci.org/wryun/rjsone)
+
 `rjsone` (Render JSON-e) is a simple wrapper around the
 [JSON-e templating language](https://taskcluster.github.io/json-e/).
 
