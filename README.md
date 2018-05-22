@@ -43,7 +43,11 @@ output JSON or YAML.
 
 # Getting it
 
-No builds yet. Just:
+Grab the latest binary from:
+
+    https://github.com/wryun/rjsone/releases
+
+Or, to build it yourself:
 
     go get github.com/wryun/rjsone
 
