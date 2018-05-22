@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -26,14 +27,16 @@ const description = `rjsone is a simple wrapper around the JSON-e templating lan
 See: https://taskcluster.github.io/json-e/
 
 Context is usually provided by a list of arguments. By default,
-these are interpreted as files. However, if the 'filename' begins with
-a '+', the rest of the argument is interpreted as a raw string.
-Data is loaded as YAML/JSON by default and merged into the
-main context. You can specify a particular key to load a JSON
+these are interpreted as files. Data is loaded as YAML/JSON by default
+and merged into the main context.
+
+You can specify a particular context key to load a YAML/JSON
 file into using keyname:filename.yaml; if you specify two colons
 (i.e. keyname::filename.yaml) it will load it as a raw string.
 When duplicate keys are found, later entries replace earlier
 at the top level only (no multi-level merging).
+In this context, if the filename begins with a '+', the rest of the argument
+is interpreted as a raw string.
 
 You can also use keyname:.. (or keyname::..) to indicate that subsequent
 entries without keys should be loaded as a list element into that key. If you
@@ -44,10 +47,12 @@ For complex applications, single argument functions can be added by prefixing
 the filename with a '-' (or a '--' for raw string input). For example:
 
     b64decode::--'base64 -d'
-	
-This adds a base64 decode function to the context which accepts a string
-as input and outputs a string. Conversely, if you use :-, this accepts
-JSON as input and outputs JSON or YAML.
+
+This adds a base64 decode function to the context which accepts an array
+(command line arguments) and string (stdin) as input and outputs a string.
+For example, you could use this function like b64decode([], 'Zm9vCg==').
+Conversely, if you use :-, your command must accept JSON as stdin and
+output JSON or YAML.
 `
 
 type arguments struct {
@@ -280,10 +285,12 @@ func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
 	commandArray := strings.Split(commandString, " ")
 
 	if rawInput && rawOutput {
-		f = func(s string) (string, error) {
+		f = func(args []interface{}, stdin string) (string, error) {
+			stringArgs, err := castToStrings(args)
+			commandArray = append(commandArray, stringArgs...)
 			command := exec.Command(commandArray[0], commandArray[1:]...)
 			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader([]byte(s))
+			command.Stdin = bytes.NewReader([]byte(stdin))
 			stdoutBytes, err := command.Output()
 			if err != nil {
 				return "", err
@@ -291,10 +298,12 @@ func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
 			return string(stdoutBytes), nil
 		}
 	} else if rawInput {
-		f = func(s string) (interface{}, error) {
+		f = func(args []interface{}, stdin string) (interface{}, error) {
+			stringArgs, err := castToStrings(args)
+			commandArray = append(commandArray, stringArgs...)
 			command := exec.Command(commandArray[0], commandArray[1:]...)
 			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader([]byte(s))
+			command.Stdin = bytes.NewReader([]byte(stdin))
 			stdoutBytes, err := command.Output()
 			if err != nil {
 				return nil, err
@@ -308,12 +317,14 @@ func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
 			return o, nil
 		}
 	} else if rawOutput {
-		f = func(v interface{}) (string, error) {
-			jsonBytes, err := json.Marshal(v)
+		f = func(args []interface{}, stdin interface{}) (string, error) {
+			jsonBytes, err := json.Marshal(stdin)
 			if err != nil {
 				return "", err
 			}
 
+			stringArgs, err := castToStrings(args)
+			commandArray = append(commandArray, stringArgs...)
 			command := exec.Command(commandArray[0], commandArray[1:]...)
 			command.Stderr = os.Stderr
 			command.Stdin = bytes.NewReader(jsonBytes)
@@ -321,12 +332,14 @@ func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
 			return string(stdoutBytes), err
 		}
 	} else {
-		f = func(v interface{}) (interface{}, error) {
-			jsonBytes, err := json.Marshal(v)
+		f = func(args []interface{}, stdin interface{}) (interface{}, error) {
+			jsonBytes, err := json.Marshal(stdin)
 			if err != nil {
 				return "", err
 			}
 
+			stringArgs, err := castToStrings(args)
+			commandArray = append(commandArray, stringArgs...)
 			command := exec.Command(commandArray[0], commandArray[1:]...)
 			command.Stderr = os.Stderr
 			command.Stdin = bytes.NewReader(jsonBytes)
@@ -340,9 +353,21 @@ func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
 			if err != nil {
 				return nil, err
 			}
-			return v, nil
+			return stdin, nil
 		}
 	}
 
 	return jsone_interpreter.WrapFunction(f)
+}
+
+func castToStrings(slice []interface{}) ([]string, error) {
+	result := make([]string, len(slice))
+	for i, v := range slice {
+		if s, ok := v.(string); !ok {
+			return nil, errors.New("function command line arguments must be strings (use stdin or $json)")
+		} else {
+			result[i] = s
+		}
+	}
+	return result, nil
 }

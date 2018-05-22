@@ -5,14 +5,16 @@ It's a safe and easy way to have templates of moderate complexity
 for configuration as code 'languages' like Kubernetes and CloudFormation.
 
 Context is usually provided by a list of arguments. By default,
-these are interpreted as files. However, if the 'filename' begins with
-a '+', the rest of the argument is interpreted as a raw string.
-Data is loaded as YAML/JSON by default and merged into the
-main context. You can specify a particular key to load a JSON
+these are interpreted as files. Data is loaded as YAML/JSON by default
+and merged into the main context.
+
+You can specify a particular context key to load a YAML/JSON
 file into using keyname:filename.yaml; if you specify two colons
 (i.e. keyname::filename.yaml) it will load it as a raw string.
 When duplicate keys are found, later entries replace earlier
 at the top level only (no multi-level merging).
+In this context, if the filename begins with a '+', the rest of the argument
+is interpreted as a raw string.
 
 You can also use keyname:.. (or keyname::..) to indicate that subsequent
 entries without keys should be loaded as a list element into that key. If you
@@ -24,11 +26,13 @@ the filename with a '-' (or a '--' for raw string input). For example:
 
     b64decode::--'base64 -d'
 
-This adds a base64 decode function to the context which accepts a string
-as input and outputs a string. Conversely, if you use :-, this accepts
-JSON as input and outputs JSON or YAML.
+This adds a base64 decode function to the context which accepts an array
+(command line arguments) and string (stdin) as input and outputs a string.
+For example, you could use this function like b64decode([], 'Zm9vCg==').
+Conversely, if you use :-, your command must accept JSON as stdin and
+output JSON or YAML.
 
-    Usage: rjsone [options] [key:]contextfile [[key:]contextfile ...]
+    Usage: rjsone [options] [[key:[:]][+]contextfile ...]
       -i int
             indentation level of JSON output; 0 means no pretty-printing (default 2)
       -t string

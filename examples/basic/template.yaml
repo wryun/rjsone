@@ -1,7 +1,7 @@
 encoded:
-  $eval: b64encode("foo")
+  $eval: b64encode(['-i'], "foo")
 decoded:
-  $eval: b64decode(b64encode("foooooo"))
+  $eval: b64decode([], b64encode([], "foooooo"))
 raw: ${rawparam}
 a: ${foo}
 b: ${bar}
