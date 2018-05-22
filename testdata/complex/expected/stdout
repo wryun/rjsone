@@ -1,0 +1,20 @@
+a: something
+b: nothing
+c: everything
+d: |
+  foo
+decoded: foooooo
+encoded: |
+  Zm9v
+fileinfo:
+- basename: input.txt
+  content: |
+    foo
+  filename: input.txt
+  name: input
+raw: hello
+stuff:
+- foo: something
+- bar: nothing
+- |
+  foo
