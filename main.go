@@ -35,7 +35,7 @@ You can specify a particular context key to load a YAML/JSON
 file into using keyname:filename.yaml; if you specify two colons
 (i.e. keyname::filename.yaml) it will load it as a raw string.
 When duplicate keys are found, later entries replace earlier
-at the top level only (no multi-level merging).
+at the top level only (no multi-level merging), unless the '-d' flag is passed to perform deep merging.
 In this context, if the filename begins with a '+', the rest of the argument
 is interpreted as a raw string.
 
@@ -312,8 +312,8 @@ func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
 	if rawInput && rawOutput {
 		f = func(args []interface{}, stdin string) (string, error) {
 			stringArgs, err := castToStrings(args)
-			commandArray = append(commandArray, stringArgs...)
-			command := exec.Command(commandArray[0], commandArray[1:]...)
+			extendedCommandArray := append(commandArray, stringArgs...)
+			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
 			command.Stderr = os.Stderr
 			command.Stdin = bytes.NewReader([]byte(stdin))
 			stdoutBytes, err := command.Output()
@@ -325,8 +325,8 @@ func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
 	} else if rawInput {
 		f = func(args []interface{}, stdin string) (interface{}, error) {
 			stringArgs, err := castToStrings(args)
-			commandArray = append(commandArray, stringArgs...)
-			command := exec.Command(commandArray[0], commandArray[1:]...)
+			extendedCommandArray := append(commandArray, stringArgs...)
+			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
 			command.Stderr = os.Stderr
 			command.Stdin = bytes.NewReader([]byte(stdin))
 			stdoutBytes, err := command.Output()
@@ -349,8 +349,8 @@ func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
 			}
 
 			stringArgs, err := castToStrings(args)
-			commandArray = append(commandArray, stringArgs...)
-			command := exec.Command(commandArray[0], commandArray[1:]...)
+			extendedCommandArray := append(commandArray, stringArgs...)
+			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
 			command.Stderr = os.Stderr
 			command.Stdin = bytes.NewReader(jsonBytes)
 			stdoutBytes, err := command.Output()
@@ -364,8 +364,8 @@ func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
 			}
 
 			stringArgs, err := castToStrings(args)
-			commandArray = append(commandArray, stringArgs...)
-			command := exec.Command(commandArray[0], commandArray[1:]...)
+			extendedCommandArray := append(commandArray, stringArgs...)
+			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
 			command.Stderr = os.Stderr
 			command.Stdin = bytes.NewReader(jsonBytes)
 			stdoutBytes, err := command.Output()

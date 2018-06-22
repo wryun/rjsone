@@ -1,0 +1,3 @@
+subkey1: 'overridden subkey1 value'
+subkey3:
+  nested2: 'overridden subkey3.nested2 value'

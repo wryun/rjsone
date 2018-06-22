@@ -4,8 +4,7 @@ c: everything
 d: |
   foo
 decoded: foooooo
-encoded: |
-  Zm9v
+encoded: sbb
 fileinfo:
 - basename: input.txt
   content: |
