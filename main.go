@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/imdario/mergo"
 	jsone "github.com/taskcluster/json-e"
 	jsone_interpreter "github.com/taskcluster/json-e/interpreter"
 	// Quick hack of ghodss YAML to expose a new method
@@ -60,6 +61,7 @@ type arguments struct {
 	indentation  int
 	templateFile string
 	verbose      bool
+	deepMerge    bool
 	contexts     []string
 }
 
@@ -74,6 +76,7 @@ func main() {
 	flag.StringVar(&args.templateFile, "t", "-", "file to use for template (- is stdin)")
 	flag.BoolVar(&args.yaml, "y", false, "output YAML rather than JSON (always reads YAML/JSON)")
 	flag.BoolVar(&args.verbose, "v", false, "show information about processing on stderr")
+	flag.BoolVar(&args.deepMerge, "d", false, "performs a deep merge of contexts")
 	flag.IntVar(&args.indentation, "i", 2, "indentation of JSON output; 0 means no pretty-printing")
 	flag.Parse()
 
@@ -87,7 +90,7 @@ func main() {
 }
 
 func run(l *log.Logger, out io.Writer, args arguments) error {
-	context, err := loadContext(args.contexts)
+	context, err := loadContext(args.contexts, args.deepMerge)
 	if err != nil {
 		return err
 	}
@@ -165,7 +168,7 @@ func run(l *log.Logger, out io.Writer, args arguments) error {
 	}
 }
 
-func loadContext(contextOps []string) (map[string]interface{}, error) {
+func loadContext(contextOps []string, deepMerge bool) (map[string]interface{}, error) {
 	context := make(map[string]interface{})
 
 	var currentContextList struct {
@@ -187,9 +190,18 @@ func loadContext(contextOps []string) (map[string]interface{}, error) {
 				if !ok {
 					return nil, fmt.Errorf("direct merge of %q failed - not an object, prefix with a key", entry)
 				}
-				for k, v := range mapData {
-					context[k] = v
+
+				if deepMerge {
+					err = mergo.Merge(&context, mapData, mergo.WithOverride)
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					for k, v := range mapData {
+						context[k] = v
+					}
 				}
+
 			} else { // ah, we're in a list; we should append it to the right key
 				data, err := readDataArgument(entry, currentContextList.raw)
 				if err != nil {
@@ -240,7 +252,20 @@ func loadContext(contextOps []string) (map[string]interface{}, error) {
 				if err != nil {
 					return nil, err
 				}
-				context[key] = data
+				if deepMerge {
+					dst, dstOk := context[key].(map[string]interface{})
+					src, srcOk := data.(map[string]interface{})
+					if dstOk && srcOk {
+						err = mergo.Merge(&dst, src, mergo.WithOverride)
+						if err != nil {
+							return nil, err
+						}
+					} else {
+						context[key] = data
+					}
+				} else {
+					context[key] = data
+				}
 			}
 		}
 	}
