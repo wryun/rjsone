@@ -2,16 +2,35 @@
 
 set -eu
 
+xreadlink() {
+   # This sort of implements readlink -f except it works on OSX too
+
+   node=$1
+
+   cd `dirname $node`
+   node=`basename $node`
+
+   while [ -L "$node" ]
+   do
+       node=`readlink $node`
+
+       cd `dirname $node`
+       node=`basename $node`
+   done
+
+   echo `pwd`/$node
+}
+
 TEMPDIR="$(mktemp -d)"
 trap "rm -rf $TEMPDIR" EXIT
 
 go build
-export PATH="$(readlink -f .):$PATH"
+export PATH="$(xreadlink .):$PATH"
 
 run() {
   local outputdir
   set +e
-  outputdir="$(readlink -f "$2")"
+  outputdir="$(xreadlink "$2")"
   cd "$1"
   "./run.sh" > "$outputdir/stdout" 2> "$outputdir/stderr"
   echo "$?" > "$outputdir/exitcode"
@@ -22,7 +41,7 @@ run() {
 PASS=0
 FAIL=0
 
-if [ "$1" = "-g" ]; then
+if [ "${1-}" = "-g" ]; then
   # generate 'golden' files (i.e. test output)
   shift
 

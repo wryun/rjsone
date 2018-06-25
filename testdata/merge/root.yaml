@@ -1,0 +1,12 @@
+root:
+  subkey1: 'original subkey1 value'
+  subkey2: 'original subkey2 value'
+  subkey3:
+    nested1: 'original subkey3.nested1 value'
+    nested2:
+      complex_nested_structure_will_be_overridden: 'original subkey3.nested2 value'
+root_list:
+  - this
+  - was
+  - a
+  - list

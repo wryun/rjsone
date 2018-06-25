@@ -1,0 +1,6 @@
+nested:
+  should_be_original: original subkey3.nested1 value
+  should_be_overridden: overridden subkey3.nested2 value
+should_be_a_string: string override
+should_be_original: original subkey2 value
+should_be_overridden: overridden subkey1 value

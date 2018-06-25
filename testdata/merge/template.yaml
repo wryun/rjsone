@@ -1,0 +1,6 @@
+should_be_overridden: {$eval: root.subkey1}
+should_be_original: {$eval: root.subkey2}
+nested:
+  should_be_original: {$eval: root.subkey3.nested1}
+  should_be_overridden: {$eval: root.subkey3.nested2}
+should_be_a_string: {$eval: root_list}

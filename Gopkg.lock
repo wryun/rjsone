@@ -2,6 +2,12 @@
 
 
 [[projects]]
+  name = "github.com/imdario/mergo"
+  packages = ["."]
+  revision = "9316a62528ac99aaecb4e47eadd6dc8aa6533d58"
+  version = "v0.3.5"
+
+[[projects]]
   name = "github.com/taskcluster/json-e"
   packages = [
     ".",
@@ -26,6 +32,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "c97b204dc73595a050d715ae715d647041d9b069e22e071e5946afc1bd5cf6dc"
+  inputs-digest = "1a46a12c324553e6998d528e22e809ea3063d913f83f240110b996f7d8c066c9"
   solver-name = "gps-cdcl"
   solver-version = 1
