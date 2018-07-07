@@ -88,7 +88,7 @@ func main() {
 	}
 }
 
-func run(l *log.Logger, args arguments) error {
+func run(l *log.Logger, args arguments) (finalError error) {
 	context, err := loadContext(args.contexts, args.deepMerge)
 	if err != nil {
 		return err
@@ -103,25 +103,37 @@ func run(l *log.Logger, args arguments) error {
 		l.Println(string(output))
 	}
 
-	var out io.Writer
-	if args.outputFile == "-" {
-		out = os.Stdout
-	} else {
-		var err error
-		out, err = os.Create(args.outputFile)
-		if err != nil {
-			return err
-		}
-	}
-
 	var input io.Reader
 	if args.templateFile == "-" {
 		input = os.Stdin
 	} else {
-		input, err = os.Open(args.templateFile)
+		f, err := os.Open(args.templateFile)
 		if err != nil {
 			return err
 		}
+
+		defer f.Close()
+
+		input = f
+	}
+
+	var out io.Writer
+	if args.outputFile == "-" {
+		out = os.Stdout
+	} else {
+		f, err := os.Create(args.outputFile)
+		if err != nil {
+			return err
+		}
+
+		defer func() {
+			err := f.Close()
+			if err != nil {
+				finalError = err
+			}
+		}()
+
+		out = f
 	}
 
 	var encoder *yaml_v2.Encoder
