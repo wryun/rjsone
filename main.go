@@ -62,7 +62,206 @@ type arguments struct {
 	templateFile string
 	verbose      bool
 	deepMerge    bool
-	contexts     []string
+	contexts     []context
+}
+
+type context interface {
+	eval() (interface{}, error)
+}
+
+type commonContext struct {
+	key string
+	raw bool
+}
+
+func (cc *commonContext) cleanupResult(result interface{}) (interface{}, error) {
+	var finalResult interface{}
+	if cc.raw {
+		switch r := result.(type) {
+		case []byte:
+			finalResult = string(r)
+		default:
+			// otherwise, let's just let JSON-e complain...
+			finalResult = result
+		}
+	} else {
+		var rawBytes []byte
+		switch r := result.(type) {
+		case string:
+			rawBytes = []byte(r)
+		case []byte:
+			rawBytes = r
+		default:
+			return nil, errors.New("somehow got a non string/byte slice?")
+		}
+		if err := yaml_ghodss.Unmarshal(rawBytes, &finalResult); err != nil {
+			return nil, err
+		}
+	}
+
+	if cc.key != "" {
+		return map[string]interface{}{cc.key: finalResult}, nil
+	}
+
+	return finalResult, nil
+}
+
+type fileContext struct {
+	commonContext
+	filename string
+}
+
+func (fc *fileContext) eval() (interface{}, error) {
+	result, err := ioutil.ReadFile(fc.filename)
+	if err != nil {
+		return nil, err
+	}
+
+	return fc.cleanupResult(result)
+}
+
+type stdinContext struct {
+	commonContext
+	filename string
+}
+
+func (sc *stdinContext) eval() (interface{}, error) {
+	result, err := ioutil.ReadAll(os.Stdin)
+	if err != nil {
+		return nil, err
+	}
+
+	return sc.cleanupResult(result)
+}
+
+type functionContext struct {
+	commonContext
+	function  string
+	rawOutput bool
+	rawInput  bool
+}
+
+func (fc *functionContext) eval() (interface{}, error) {
+	var f interface{}
+	commandArray := strings.Split(fc.function, " ")
+
+	if fc.rawInput && fc.rawOutput {
+		f = func(args []interface{}, stdin string) (string, error) {
+			stringArgs, err := castToStrings(args)
+			extendedCommandArray := append(commandArray, stringArgs...)
+			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
+			command.Stderr = os.Stderr
+			command.Stdin = bytes.NewReader([]byte(stdin))
+			stdoutBytes, err := command.Output()
+			if err != nil {
+				return "", err
+			}
+			return string(stdoutBytes), nil
+		}
+	} else if fc.rawInput {
+		f = func(args []interface{}, stdin string) (interface{}, error) {
+			stringArgs, err := castToStrings(args)
+			extendedCommandArray := append(commandArray, stringArgs...)
+			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
+			command.Stderr = os.Stderr
+			command.Stdin = bytes.NewReader([]byte(stdin))
+			stdoutBytes, err := command.Output()
+			if err != nil {
+				return nil, err
+			}
+
+			var o interface{}
+			err = yaml_ghodss.Unmarshal(stdoutBytes, &o)
+			if err != nil {
+				return nil, err
+			}
+			return o, nil
+		}
+	} else if fc.rawOutput {
+		f = func(args []interface{}, stdin interface{}) (string, error) {
+			jsonBytes, err := json.Marshal(stdin)
+			if err != nil {
+				return "", err
+			}
+
+			stringArgs, err := castToStrings(args)
+			extendedCommandArray := append(commandArray, stringArgs...)
+			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
+			command.Stderr = os.Stderr
+			command.Stdin = bytes.NewReader(jsonBytes)
+			stdoutBytes, err := command.Output()
+			return string(stdoutBytes), err
+		}
+	} else {
+		f = func(args []interface{}, stdin interface{}) (interface{}, error) {
+			jsonBytes, err := json.Marshal(stdin)
+			if err != nil {
+				return "", err
+			}
+
+			stringArgs, err := castToStrings(args)
+			extendedCommandArray := append(commandArray, stringArgs...)
+			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
+			command.Stderr = os.Stderr
+			command.Stdin = bytes.NewReader(jsonBytes)
+			stdoutBytes, err := command.Output()
+			if err != nil {
+				return nil, err
+			}
+
+			var o interface{}
+			err = yaml_ghodss.Unmarshal(stdoutBytes, &o)
+			if err != nil {
+				return nil, err
+			}
+			return stdin, nil
+		}
+	}
+
+	return jsone_interpreter.WrapFunction(f), nil
+}
+
+type textContext struct {
+	commonContext
+	text string
+}
+
+func (tc *textContext) eval() (interface{}, error) {
+	return tc.cleanupResult(tc.text)
+}
+
+type listContext struct {
+	commonContext
+	contexts []context
+	metadata bool
+}
+
+func (lc *listContext) eval() (interface{}, error) {
+	outputList := make([]interface{}, 0, len(lc.contexts))
+
+	for _, context := range lc.contexts {
+		result, err := context.eval()
+		if err != nil {
+			return nil, err
+		}
+
+		if !lc.metadata {
+			outputList = append(outputList, result)
+		}
+
+		metadataResult := map[string]interface{}{
+			"content": result,
+		}
+		if fc, ok := context.(*fileContext); ok {
+			basename := path.Base(fc.filename)
+			metadataResult["filename"] = fc.filename
+			metadataResult["basename"] = basename
+			metadataResult["name"] = strings.TrimSuffix(basename, filepath.Ext(basename))
+		}
+		outputList = append(outputList, metadataResult)
+	}
+
+	return lc.cleanupResult(outputList)
 }
 
 func main() {
@@ -80,12 +279,72 @@ func main() {
 	flag.IntVar(&args.indentation, "i", 2, "indentation of JSON output; 0 means no pretty-printing")
 	flag.Parse()
 
-	args.contexts = flag.Args()
+	args.contexts = parseContexts(flag.Args())
 	logger := log.New(os.Stderr, "", 0)
 
 	if err := run(logger, os.Stdout, args); err != nil {
 		fmt.Fprintf(flag.CommandLine.Output(), "Fatal error: %s\n", err)
 		os.Exit(2)
+	}
+}
+
+func parseContexts(rawContextInfo []string) []context {
+	contexts := make([]context, 0)
+
+	currentContexts := &contexts
+
+	for _, contextOp := range rawContextInfo {
+		key := ""
+		var entry string
+		if strings.HasPrefix(contextOp, "+") {
+			entry = contextOp
+		} else {
+			splitContextOp := strings.SplitN(contextOp, ":", 2)
+			if len(splitContextOp) < 2 {
+				entry = splitContextOp[0]
+			} else {
+				key = splitContextOp[0]
+				entry = splitContextOp[1]
+				// If we have a new key, we should jump out of any list we're in
+				currentContexts = &contexts
+			}
+		}
+
+		context := parseContext(key, entry)
+		*currentContexts = append(*currentContexts, context)
+		if listContext, ok := context.(*listContext); ok {
+			currentContexts = &listContext.contexts
+		}
+	}
+
+	return contexts
+}
+
+func parseContext(key string, entry string) context {
+	baseContext := commonContext{
+		raw: strings.HasPrefix(entry, ":"),
+		key: key,
+	}
+
+	if baseContext.raw {
+		entry = entry[1:]
+	}
+
+	switch {
+	case entry == "..":
+		return &listContext{commonContext: baseContext, metadata: false}
+	case entry == "...":
+		return &listContext{commonContext: baseContext, metadata: true}
+	case strings.HasPrefix(entry, "+"):
+		return &textContext{commonContext: baseContext, text: entry[1:]}
+	case entry == "-":
+		return &stdinContext{commonContext: baseContext}
+	case strings.HasPrefix(entry, "--"):
+		return &functionContext{commonContext: commonContext{raw: true, key: key}, rawInput: baseContext.raw, rawOutput: true, function: entry[2:]}
+	case strings.HasPrefix(entry, "-"):
+		return &functionContext{commonContext: commonContext{raw: true, key: key}, rawInput: baseContext.raw, rawOutput: false, function: entry[1:]}
+	default:
+		return &fileContext{commonContext: baseContext, filename: entry}
 	}
 }
 
@@ -168,221 +427,33 @@ func run(l *log.Logger, out io.Writer, args arguments) error {
 	}
 }
 
-func loadContext(contextOps []string, deepMerge bool) (map[string]interface{}, error) {
-	context := make(map[string]interface{})
+func loadContext(contexts []context, deepMerge bool) (map[string]interface{}, error) {
+	finalContext := make(map[string]interface{})
 
-	var currentContextList struct {
-		raw      bool
-		key      string
-		metadata bool
-	}
-
-	for _, contextOp := range contextOps {
-		splitContextOp := strings.SplitN(contextOp, ":", 2)
-		if len(splitContextOp) < 2 { // i.e. we just have a file to load
-			entry := splitContextOp[0]
-			if currentContextList.key == "" { // we're not in a list - just load it in!
-				data, err := readDataArgument(entry, false)
-				if err != nil {
-					return nil, err
-				}
-				mapData, ok := data.(map[string]interface{})
-				if !ok {
-					return nil, fmt.Errorf("direct merge of %q failed - not an object, prefix with a key", entry)
-				}
-
-				if deepMerge {
-					err = mergo.Merge(&context, mapData, mergo.WithOverride)
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					for k, v := range mapData {
-						context[k] = v
-					}
-				}
-
-			} else { // ah, we're in a list; we should append it to the right key
-				data, err := readDataArgument(entry, currentContextList.raw)
-				if err != nil {
-					return nil, err
-				}
-				if currentContextList.metadata {
-					contextData := map[string]interface{}{
-						"content": data,
-					}
-
-					// hack...
-					basename := path.Base(entry)
-					if !strings.HasPrefix(entry, "+") {
-						contextData["filename"] = entry
-						contextData["basename"] = basename
-						contextData["name"] = strings.TrimSuffix(basename, filepath.Ext(basename))
-					}
-					data = contextData
-				}
-				context[currentContextList.key] = append(context[currentContextList.key].([]interface{}), data)
-			}
-		} else { // we have a key
-			key := splitContextOp[0]
-			if key == "" {
-				return nil, fmt.Errorf("must specify key before ':' in %q", contextOp)
-			}
-			raw := strings.HasPrefix(splitContextOp[1], ":")
-			var entry string
-			if raw {
-				entry = splitContextOp[1][1:]
-			} else {
-				entry = splitContextOp[1]
-			}
-			if entry == "" {
-				return nil, fmt.Errorf("must specify entry or ellipsis after ':' in %q", contextOp)
-			}
-
-			if entry == ".." || entry == "..." { // we have a list to follow - switch mode!
-				if _, ok := context[key].([]interface{}); !ok {
-					context[key] = make([]interface{}, 0)
-				}
-				currentContextList.key = key
-				currentContextList.raw = raw
-				currentContextList.metadata = entry == "..."
-			} else { // otherwise, we end any existing list and set this directly
-				currentContextList.key = ""
-				data, err := readDataArgument(entry, raw)
-				if err != nil {
-					return nil, err
-				}
-				if deepMerge {
-					dst, dstOk := context[key].(map[string]interface{})
-					src, srcOk := data.(map[string]interface{})
-					if dstOk && srcOk {
-						err = mergo.Merge(&dst, src, mergo.WithOverride)
-						if err != nil {
-							return nil, err
-						}
-					} else {
-						context[key] = data
-					}
-				} else {
-					context[key] = data
-				}
-			}
+	for _, context := range contexts {
+		untypedNewContext, err := context.eval()
+		if err != nil {
+			return nil, err
 		}
-	}
 
-	return context, nil
-}
+		newContext, ok := untypedNewContext.(map[string]interface{})
+		if !ok {
+			return nil, errors.New("TODO cannot have unkeyed top level context")
+		}
 
-func readDataArgument(entry string, raw bool) (interface{}, error) {
-	var data []byte
-	var err error
-	if strings.HasPrefix(entry, "+") {
-		data = []byte(entry[1:])
-	} else if entry == "-" {
-		data, err = ioutil.ReadAll(os.Stdin)
-	} else if strings.HasPrefix(entry, "-") {
-		entry := entry[1:]
-		if strings.HasPrefix(entry, "-") {
-			return buildFunction(entry[1:], raw, true), nil
+		if deepMerge {
+			err = mergo.Merge(&finalContext, newContext, mergo.WithOverride)
+			if err != nil {
+				return nil, err
+			}
 		} else {
-			return buildFunction(entry, raw, false), nil
-		}
-	} else {
-		data, err = ioutil.ReadFile(entry)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	if raw {
-		return string(data), nil
-	}
-
-	var o interface{}
-	err = yaml_ghodss.Unmarshal(data, &o)
-	return o, err
-}
-
-// Builds a function out of a command that does stdin/stdout
-func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
-	var f interface{}
-	commandArray := strings.Split(commandString, " ")
-
-	if rawInput && rawOutput {
-		f = func(args []interface{}, stdin string) (string, error) {
-			stringArgs, err := castToStrings(args)
-			extendedCommandArray := append(commandArray, stringArgs...)
-			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
-			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader([]byte(stdin))
-			stdoutBytes, err := command.Output()
-			if err != nil {
-				return "", err
+			for k, v := range newContext {
+				finalContext[k] = v
 			}
-			return string(stdoutBytes), nil
-		}
-	} else if rawInput {
-		f = func(args []interface{}, stdin string) (interface{}, error) {
-			stringArgs, err := castToStrings(args)
-			extendedCommandArray := append(commandArray, stringArgs...)
-			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
-			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader([]byte(stdin))
-			stdoutBytes, err := command.Output()
-			if err != nil {
-				return nil, err
-			}
-
-			var o interface{}
-			err = yaml_ghodss.Unmarshal(stdoutBytes, &o)
-			if err != nil {
-				return nil, err
-			}
-			return o, nil
-		}
-	} else if rawOutput {
-		f = func(args []interface{}, stdin interface{}) (string, error) {
-			jsonBytes, err := json.Marshal(stdin)
-			if err != nil {
-				return "", err
-			}
-
-			stringArgs, err := castToStrings(args)
-			extendedCommandArray := append(commandArray, stringArgs...)
-			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
-			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader(jsonBytes)
-			stdoutBytes, err := command.Output()
-			return string(stdoutBytes), err
-		}
-	} else {
-		f = func(args []interface{}, stdin interface{}) (interface{}, error) {
-			jsonBytes, err := json.Marshal(stdin)
-			if err != nil {
-				return "", err
-			}
-
-			stringArgs, err := castToStrings(args)
-			extendedCommandArray := append(commandArray, stringArgs...)
-			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
-			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader(jsonBytes)
-			stdoutBytes, err := command.Output()
-			if err != nil {
-				return nil, err
-			}
-
-			var o interface{}
-			err = yaml_ghodss.Unmarshal(stdoutBytes, &o)
-			if err != nil {
-				return nil, err
-			}
-			return stdin, nil
 		}
 	}
 
-	return jsone_interpreter.WrapFunction(f)
+	return finalContext, nil
 }
 
 func castToStrings(slice []interface{}) ([]string, error) {
