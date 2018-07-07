@@ -13,7 +13,9 @@ fileinfo:
   name: input
 raw: hello
 stuff:
-- foo: something
-- bar: nothing
-- |
-  foo
+  somelist:
+  - foo: something
+  - bar: nothing
+  someotherlist:
+  - |
+    foo

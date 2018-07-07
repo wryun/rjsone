@@ -7,23 +7,27 @@ It's a safe and easy way to have templates of moderate complexity
 for configuration as code 'languages' like Kubernetes and CloudFormation.
 
     Usage: rjsone [options] [[key:[:]][+]contextfile ...]
+      -d    performs a deep merge of contexts
       -i int
-            indentation level of JSON output; 0 means no pretty-printing (default 2)
+            indentation of JSON output; 0 means no pretty-printing (default 2)
+      -o string
+            output to a file (default is -, which is stdout) (default "-")
       -t string
-            file to use for template (default is -, which is stdin) (default "-")
+            file to use for template (- is stdin) (default "-")
+      -v    show information about processing on stderr
       -y    output YAML rather than JSON (always reads YAML/JSON)
 
 Context is usually provided by a list of arguments. By default,
 these are interpreted as files. Data is loaded as YAML/JSON by default
-and merged into the main context.
+and merged into the main context. If the 'filename' begins with a '+',
+the rest of the argument is interpreted as a raw string.
 
 You can specify a particular context key to load a YAML/JSON
 file into using keyname:filename.yaml; if you specify two colons
 (i.e. keyname::filename.yaml) it will load it as a raw string.
 When duplicate keys are found, later entries replace earlier
-at the top level only (no multi-level merging).
-In this context, if the filename begins with a '+', the rest of the argument
-is interpreted as a raw string.
+at the top level only (no multi-level merging), unless the '-d' flag
+is passed to perform deep merging.
 
 You can also use keyname:.. (or keyname::..) to indicate that subsequent
 entries without keys should be loaded as a list element into that key. If you
@@ -108,5 +112,5 @@ b: nothing
 c: everything
 ```
 
-*Warning*: if you need to insert anything that's not a pure string, you'll
-need to understand JSON-e's '$eval' operator.
+*Warning*: if you need to construct anything that's not a pure string from templated
+input, you'll probably need to understand JSON-e's '$eval' operator.

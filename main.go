@@ -1,23 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
-	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/imdario/mergo"
 	jsone "github.com/taskcluster/json-e"
-	jsone_interpreter "github.com/taskcluster/json-e/interpreter"
 	// Quick hack of ghodss YAML to expose a new method
 	yaml_ghodss "github.com/wryun/yaml-1"
 	yaml_v2 "gopkg.in/yaml.v2"
@@ -29,15 +22,15 @@ See: https://taskcluster.github.io/json-e/
 
 Context is usually provided by a list of arguments. By default,
 these are interpreted as files. Data is loaded as YAML/JSON by default
-and merged into the main context.
+and merged into the main context. If the 'filename' begins with a '+',
+the rest of the argument is interpreted as a raw string.
 
 You can specify a particular context key to load a YAML/JSON
 file into using keyname:filename.yaml; if you specify two colons
 (i.e. keyname::filename.yaml) it will load it as a raw string.
 When duplicate keys are found, later entries replace earlier
-at the top level only (no multi-level merging), unless the '-d' flag is passed to perform deep merging.
-In this context, if the filename begins with a '+', the rest of the argument
-is interpreted as a raw string.
+at the top level only (no multi-level merging), unless the '-d' flag
+is passed to perform deep merging.
 
 You can also use keyname:.. (or keyname::..) to indicate that subsequent
 entries without keys should be loaded as a list element into that key. If you
@@ -62,7 +55,12 @@ type arguments struct {
 	templateFile string
 	verbose      bool
 	deepMerge    bool
-	contexts     []string
+	outputFile   string
+	contexts     []context
+}
+
+type context interface {
+	eval() (interface{}, error)
 }
 
 func main() {
@@ -77,19 +75,20 @@ func main() {
 	flag.BoolVar(&args.yaml, "y", false, "output YAML rather than JSON (always reads YAML/JSON)")
 	flag.BoolVar(&args.verbose, "v", false, "show information about processing on stderr")
 	flag.BoolVar(&args.deepMerge, "d", false, "performs a deep merge of contexts")
+	flag.StringVar(&args.outputFile, "o", "-", "output to a file (default is -, which is stdout)")
 	flag.IntVar(&args.indentation, "i", 2, "indentation of JSON output; 0 means no pretty-printing")
 	flag.Parse()
 
-	args.contexts = flag.Args()
+	args.contexts = parseContexts(flag.Args())
 	logger := log.New(os.Stderr, "", 0)
 
-	if err := run(logger, os.Stdout, args); err != nil {
+	if err := run(logger, args); err != nil {
 		fmt.Fprintf(flag.CommandLine.Output(), "Fatal error: %s\n", err)
 		os.Exit(2)
 	}
 }
 
-func run(l *log.Logger, out io.Writer, args arguments) error {
+func run(l *log.Logger, args arguments) error {
 	context, err := loadContext(args.contexts, args.deepMerge)
 	if err != nil {
 		return err
@@ -102,6 +101,17 @@ func run(l *log.Logger, out io.Writer, args arguments) error {
 			return err
 		}
 		l.Println(string(output))
+	}
+
+	var out io.Writer
+	if args.outputFile == "-" {
+		out = os.Stdout
+	} else {
+		var err error
+		out, err = os.Create(args.outputFile)
+		if err != nil {
+			return err
+		}
 	}
 
 	var input io.Reader
@@ -168,231 +178,31 @@ func run(l *log.Logger, out io.Writer, args arguments) error {
 	}
 }
 
-func loadContext(contextOps []string, deepMerge bool) (map[string]interface{}, error) {
-	context := make(map[string]interface{})
+func loadContext(contexts []context, deepMerge bool) (map[string]interface{}, error) {
+	finalContext := make(map[string]interface{})
 
-	var currentContextList struct {
-		raw      bool
-		key      string
-		metadata bool
-	}
-
-	for _, contextOp := range contextOps {
-		splitContextOp := strings.SplitN(contextOp, ":", 2)
-		if len(splitContextOp) < 2 { // i.e. we just have a file to load
-			entry := splitContextOp[0]
-			if currentContextList.key == "" { // we're not in a list - just load it in!
-				data, err := readDataArgument(entry, false)
-				if err != nil {
-					return nil, err
-				}
-				mapData, ok := data.(map[string]interface{})
-				if !ok {
-					return nil, fmt.Errorf("direct merge of %q failed - not an object, prefix with a key", entry)
-				}
-
-				if deepMerge {
-					err = mergo.Merge(&context, mapData, mergo.WithOverride)
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					for k, v := range mapData {
-						context[k] = v
-					}
-				}
-
-			} else { // ah, we're in a list; we should append it to the right key
-				data, err := readDataArgument(entry, currentContextList.raw)
-				if err != nil {
-					return nil, err
-				}
-				if currentContextList.metadata {
-					contextData := map[string]interface{}{
-						"content": data,
-					}
-
-					// hack...
-					basename := path.Base(entry)
-					if !strings.HasPrefix(entry, "+") {
-						contextData["filename"] = entry
-						contextData["basename"] = basename
-						contextData["name"] = strings.TrimSuffix(basename, filepath.Ext(basename))
-					}
-					data = contextData
-				}
-				context[currentContextList.key] = append(context[currentContextList.key].([]interface{}), data)
-			}
-		} else { // we have a key
-			key := splitContextOp[0]
-			if key == "" {
-				return nil, fmt.Errorf("must specify key before ':' in %q", contextOp)
-			}
-			raw := strings.HasPrefix(splitContextOp[1], ":")
-			var entry string
-			if raw {
-				entry = splitContextOp[1][1:]
-			} else {
-				entry = splitContextOp[1]
-			}
-			if entry == "" {
-				return nil, fmt.Errorf("must specify entry or ellipsis after ':' in %q", contextOp)
-			}
-
-			if entry == ".." || entry == "..." { // we have a list to follow - switch mode!
-				if _, ok := context[key].([]interface{}); !ok {
-					context[key] = make([]interface{}, 0)
-				}
-				currentContextList.key = key
-				currentContextList.raw = raw
-				currentContextList.metadata = entry == "..."
-			} else { // otherwise, we end any existing list and set this directly
-				currentContextList.key = ""
-				data, err := readDataArgument(entry, raw)
-				if err != nil {
-					return nil, err
-				}
-				if deepMerge {
-					dst, dstOk := context[key].(map[string]interface{})
-					src, srcOk := data.(map[string]interface{})
-					if dstOk && srcOk {
-						err = mergo.Merge(&dst, src, mergo.WithOverride)
-						if err != nil {
-							return nil, err
-						}
-					} else {
-						context[key] = data
-					}
-				} else {
-					context[key] = data
-				}
-			}
+	for i, context := range contexts {
+		untypedNewContext, err := context.eval()
+		if err != nil {
+			return nil, err
 		}
-	}
 
-	return context, nil
-}
+		newContext, ok := untypedNewContext.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("context at position %d had no top level keys: %q", i, untypedNewContext)
+		}
 
-func readDataArgument(entry string, raw bool) (interface{}, error) {
-	var data []byte
-	var err error
-	if strings.HasPrefix(entry, "+") {
-		data = []byte(entry[1:])
-	} else if entry == "-" {
-		data, err = ioutil.ReadAll(os.Stdin)
-	} else if strings.HasPrefix(entry, "-") {
-		entry := entry[1:]
-		if strings.HasPrefix(entry, "-") {
-			return buildFunction(entry[1:], raw, true), nil
+		if deepMerge {
+			err = mergo.Merge(&finalContext, newContext, mergo.WithOverride)
+			if err != nil {
+				return nil, err
+			}
 		} else {
-			return buildFunction(entry, raw, false), nil
-		}
-	} else {
-		data, err = ioutil.ReadFile(entry)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	if raw {
-		return string(data), nil
-	}
-
-	var o interface{}
-	err = yaml_ghodss.Unmarshal(data, &o)
-	return o, err
-}
-
-// Builds a function out of a command that does stdin/stdout
-func buildFunction(commandString string, rawOutput, rawInput bool) interface{} {
-	var f interface{}
-	commandArray := strings.Split(commandString, " ")
-
-	if rawInput && rawOutput {
-		f = func(args []interface{}, stdin string) (string, error) {
-			stringArgs, err := castToStrings(args)
-			extendedCommandArray := append(commandArray, stringArgs...)
-			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
-			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader([]byte(stdin))
-			stdoutBytes, err := command.Output()
-			if err != nil {
-				return "", err
+			for k, v := range newContext {
+				finalContext[k] = v
 			}
-			return string(stdoutBytes), nil
-		}
-	} else if rawInput {
-		f = func(args []interface{}, stdin string) (interface{}, error) {
-			stringArgs, err := castToStrings(args)
-			extendedCommandArray := append(commandArray, stringArgs...)
-			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
-			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader([]byte(stdin))
-			stdoutBytes, err := command.Output()
-			if err != nil {
-				return nil, err
-			}
-
-			var o interface{}
-			err = yaml_ghodss.Unmarshal(stdoutBytes, &o)
-			if err != nil {
-				return nil, err
-			}
-			return o, nil
-		}
-	} else if rawOutput {
-		f = func(args []interface{}, stdin interface{}) (string, error) {
-			jsonBytes, err := json.Marshal(stdin)
-			if err != nil {
-				return "", err
-			}
-
-			stringArgs, err := castToStrings(args)
-			extendedCommandArray := append(commandArray, stringArgs...)
-			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
-			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader(jsonBytes)
-			stdoutBytes, err := command.Output()
-			return string(stdoutBytes), err
-		}
-	} else {
-		f = func(args []interface{}, stdin interface{}) (interface{}, error) {
-			jsonBytes, err := json.Marshal(stdin)
-			if err != nil {
-				return "", err
-			}
-
-			stringArgs, err := castToStrings(args)
-			extendedCommandArray := append(commandArray, stringArgs...)
-			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
-			command.Stderr = os.Stderr
-			command.Stdin = bytes.NewReader(jsonBytes)
-			stdoutBytes, err := command.Output()
-			if err != nil {
-				return nil, err
-			}
-
-			var o interface{}
-			err = yaml_ghodss.Unmarshal(stdoutBytes, &o)
-			if err != nil {
-				return nil, err
-			}
-			return stdin, nil
 		}
 	}
 
-	return jsone_interpreter.WrapFunction(f)
-}
-
-func castToStrings(slice []interface{}) ([]string, error) {
-	result := make([]string, len(slice))
-	for i, v := range slice {
-		if s, ok := v.(string); !ok {
-			return nil, errors.New("function command line arguments must be strings (use stdin or $json)")
-		} else {
-			result[i] = s
-		}
-	}
-	return result, nil
+	return finalContext, nil
 }

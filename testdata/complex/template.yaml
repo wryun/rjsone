@@ -8,6 +8,9 @@ b: ${bar}
 c: ${foobar}
 d: ${text}
 stuff:
-  $eval: list
+  somelist:
+    $eval: list
+  someotherlist:
+    $eval: list2
 fileinfo:
   $eval: withfilename
