@@ -22,15 +22,15 @@ See: https://taskcluster.github.io/json-e/
 
 Context is usually provided by a list of arguments. By default,
 these are interpreted as files. Data is loaded as YAML/JSON by default
-and merged into the main context.
+and merged into the main context. If the 'filename' begins with a '+',
+the rest of the argument is interpreted as a raw string.
 
 You can specify a particular context key to load a YAML/JSON
 file into using keyname:filename.yaml; if you specify two colons
 (i.e. keyname::filename.yaml) it will load it as a raw string.
 When duplicate keys are found, later entries replace earlier
-at the top level only (no multi-level merging), unless the '-d' flag is passed to perform deep merging.
-In this context, if the filename begins with a '+', the rest of the argument
-is interpreted as a raw string.
+at the top level only (no multi-level merging), unless the '-d' flag
+is passed to perform deep merging.
 
 You can also use keyname:.. (or keyname::..) to indicate that subsequent
 entries without keys should be loaded as a list element into that key. If you
@@ -55,6 +55,7 @@ type arguments struct {
 	templateFile string
 	verbose      bool
 	deepMerge    bool
+	outputFile   string
 	contexts     []context
 }
 
@@ -74,19 +75,20 @@ func main() {
 	flag.BoolVar(&args.yaml, "y", false, "output YAML rather than JSON (always reads YAML/JSON)")
 	flag.BoolVar(&args.verbose, "v", false, "show information about processing on stderr")
 	flag.BoolVar(&args.deepMerge, "d", false, "performs a deep merge of contexts")
+	flag.StringVar(&args.outputFile, "o", "-", "output to a file (default is -, which is stdout)")
 	flag.IntVar(&args.indentation, "i", 2, "indentation of JSON output; 0 means no pretty-printing")
 	flag.Parse()
 
 	args.contexts = parseContexts(flag.Args())
 	logger := log.New(os.Stderr, "", 0)
 
-	if err := run(logger, os.Stdout, args); err != nil {
+	if err := run(logger, args); err != nil {
 		fmt.Fprintf(flag.CommandLine.Output(), "Fatal error: %s\n", err)
 		os.Exit(2)
 	}
 }
 
-func run(l *log.Logger, out io.Writer, args arguments) error {
+func run(l *log.Logger, args arguments) error {
 	context, err := loadContext(args.contexts, args.deepMerge)
 	if err != nil {
 		return err
@@ -99,6 +101,17 @@ func run(l *log.Logger, out io.Writer, args arguments) error {
 			return err
 		}
 		l.Println(string(output))
+	}
+
+	var out io.Writer
+	if args.outputFile == "-" {
+		out = os.Stdout
+	} else {
+		var err error
+		out, err = os.Create(args.outputFile)
+		if err != nil {
+			return err
+		}
 	}
 
 	var input io.Reader
