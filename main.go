@@ -88,7 +88,13 @@ func main() {
 	}
 }
 
-func run(l *log.Logger, args arguments) error {
+func run(l *log.Logger, args arguments) (finalError error) {
+	closeWithError := func(c io.Closer) {
+		if err := c.Close(); err != nil && finalError == nil {
+			finalError = err
+		}
+	}
+
 	context, err := loadContext(args.contexts, args.deepMerge)
 	if err != nil {
 		return err
@@ -103,18 +109,7 @@ func run(l *log.Logger, args arguments) error {
 		l.Println(string(output))
 	}
 
-	var out io.Writer
-	if args.outputFile == "-" {
-		out = os.Stdout
-	} else {
-		var err error
-		out, err = os.Create(args.outputFile)
-		if err != nil {
-			return err
-		}
-	}
-
-	var input io.Reader
+	var input io.ReadCloser
 	if args.templateFile == "-" {
 		input = os.Stdin
 	} else {
@@ -122,13 +117,26 @@ func run(l *log.Logger, args arguments) error {
 		if err != nil {
 			return err
 		}
+		defer closeWithError(input)
+	}
+
+	var out io.WriteCloser
+	if args.outputFile == "-" {
+		out = os.Stdout
+	} else {
+		out, err = os.Create(args.outputFile)
+		if err != nil {
+			return err
+		}
+		defer closeWithError(out)
 	}
 
 	var encoder *yaml_v2.Encoder
 	if args.yaml {
 		encoder = yaml_v2.NewEncoder(out)
-		defer encoder.Close()
+		defer closeWithError(encoder)
 	}
+
 	decoder := yaml_v2.NewDecoder(input)
 	for {
 		// json-e wants types as output by json, so we have to reach
