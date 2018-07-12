@@ -91,7 +91,7 @@ func parseContent(content string, lc *listContent) content {
 	case strings.HasPrefix(data, "+"):
 		return &textContent{format: format, text: data[1:]}
 	case data == "-":
-		return &stdinContent{}
+    return &stdinContent{format: format}
 	case strings.HasPrefix(data, "--"):
 		return &functionContent{rawInput: format == textFormat, rawOutput: true, function: data[2:]}
 	case strings.HasPrefix(data, "-"):
