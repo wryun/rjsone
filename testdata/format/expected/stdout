@@ -1,0 +1,6 @@
+textinsert: |
+  text value
+toplevel:
+- something json
+- something yaml
+- something kv

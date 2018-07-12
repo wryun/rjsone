@@ -1,4 +1,5 @@
 /rjsone
+/.vscode
 
 # dep stuff
 /vendor/

@@ -12,44 +12,49 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/imdario/mergo"
+
 	jsone_interpreter "github.com/taskcluster/json-e/interpreter"
 	// Quick hack of ghodss YAML to expose a new method
 	yaml_ghodss "github.com/wryun/yaml-1"
 )
 
-func parseContexts(rawContextInfo []string) []context {
+func parseContexts(rawContexts []string) []context {
 	contexts := make([]context, 0)
 
-	var lc *listContext
+	var lc *listContent
 
-	for _, contextOp := range rawContextInfo {
+	for _, rawContext := range rawContexts {
 		key := ""
-		var entry string
-		if strings.HasPrefix(contextOp, "+") {
+		var rawContent string
+		if strings.HasPrefix(rawContext, "+") {
 			// if it starts with a '+', we know it's raw and we shouldn't
 			// try to find keys in it (otherwise we can't easily pass raw
 			// JSON/YAML as an argument)
-			entry = contextOp
+			rawContent = rawContext
 		} else {
-			splitContextOp := strings.SplitN(contextOp, ":", 2)
-			if len(splitContextOp) < 2 {
-				entry = splitContextOp[0]
+			splitContext := strings.SplitN(rawContext, ":", 2)
+			if len(splitContext) < 2 {
+				rawContent = splitContext[0]
 			} else {
-				key = splitContextOp[0]
-				entry = splitContextOp[1]
-				// If we have a new key, we should jump out of any list we're in
-				lc = nil
+				key = splitContext[0]
+				rawContent = ":" + splitContext[1]
 			}
 		}
 
-		context := parseContext(key, entry, lc)
-		if newLc, ok := context.(*listContext); ok {
+		if key != "" {
+			// If we have a new key, we should jump out of any list we're in
+			lc = nil
+		}
+
+		parsedContext := context{rawContext, key, parseContent(rawContent, lc)}
+		if newLc, ok := parsedContext.content.(*listContent); ok {
 			lc = newLc
-			contexts = append(contexts, context)
+			contexts = append(contexts, parsedContext)
 		} else if lc != nil {
-			lc.contexts = append(lc.contexts, context)
+			lc.contexts = append(lc.contexts, parsedContext)
 		} else {
-			contexts = append(contexts, context)
+			contexts = append(contexts, parsedContext)
 		}
 
 	}
@@ -57,116 +62,198 @@ func parseContexts(rawContextInfo []string) []context {
 	return contexts
 }
 
-func parseContext(key string, entry string, lc *listContext) context {
-	cc := commonContext{
-		raw: strings.HasPrefix(entry, ":"),
-		key: key,
-	}
+func parseContent(content string, lc *listContent) content {
+	fmtPointer, data := parseFormat(content)
 
-	if cc.raw {
-		entry = entry[1:]
-	}
-
-	if lc != nil {
-		// we inherit rawness from the listContext. Quirk of the syntax...
-		// (NB - there will not be a colon, because if there were it would
-		// have seen a key and aborted the list)
-		cc.raw = lc.rawChildren
+	var format inputFormat
+	if fmtPointer == nil {
+		if lc == nil {
+			format = yamlFormat
+		} else {
+			// we inherit rawness from the listContent. Quirk of the syntax...
+			// (NB - there will not be a colon, because if there were it would
+			// have seen a key and aborted the list)
+			format = lc.childFormat
+		}
+	} else if *fmtPointer == "" {
+		format = textFormat
+	} else {
+		format = *fmtPointer
 	}
 
 	// TODO: this currently allows a bunch of stupid things
-	// (e.g. embedded listContexts...). Should write a proper grammar.
+	// (e.g. embedded listContents...). Should write a proper grammar.
 	switch {
-	case entry == "..":
-		return &listContext{commonContext: commonContext{raw: true, key: key}, rawChildren: cc.raw, metadata: false}
-	case entry == "...":
-		return &listContext{commonContext: commonContext{raw: true, key: key}, rawChildren: cc.raw, metadata: true}
-	case strings.HasPrefix(entry, "+"):
-		return &textContext{commonContext: cc, text: entry[1:]}
-	case entry == "-":
-		return &stdinContext{commonContext: cc}
-	case strings.HasPrefix(entry, "--"):
-		return &functionContext{commonContext: commonContext{raw: true, key: key}, rawInput: cc.raw, rawOutput: true, function: entry[2:]}
-	case strings.HasPrefix(entry, "-"):
-		return &functionContext{commonContext: commonContext{raw: true, key: key}, rawInput: cc.raw, rawOutput: false, function: entry[1:]}
+	case data == "..":
+		return &listContent{childFormat: format, showMetadata: false}
+	case data == "...":
+		return &listContent{childFormat: format, showMetadata: true}
+	case strings.HasPrefix(data, "+"):
+		return &textContent{format: format, text: data[1:]}
+	case data == "-":
+		return &stdinContent{}
+	case strings.HasPrefix(data, "--"):
+		return &functionContent{rawInput: format == textFormat, rawOutput: true, function: data[2:]}
+	case strings.HasPrefix(data, "-"):
+		return &functionContent{rawInput: format == textFormat, rawOutput: false, function: data[1:]}
 	default:
-		return &fileContext{commonContext: cc, filename: entry}
+		return &fileContent{format: format, filename: data}
 	}
 }
 
-type commonContext struct {
-	key string
-	raw bool
+type inputFormat string
+
+const (
+	yamlFormat = inputFormat("yaml")
+	jsonFormat = inputFormat("json")
+	kvFormat   = inputFormat("kv")
+	textFormat = inputFormat("text")
+)
+
+// parseFormat part of content (content = :format:data)
+// nothing there -> nil
+func parseFormat(content string) (*inputFormat /* format */, string /* data */) {
+	if !strings.HasPrefix(content, ":") {
+		// it's just a text string/filename - no format specifier
+		return nil, content
+	}
+
+	content = content[1:]
+
+	// Hack: if the first thing after the ':' is a '+', it must be
+	// raw yaml/json (and we don't want to split on ':', as that might
+	// be a valid char...)
+	if strings.HasPrefix(content, "+") {
+		f := yamlFormat
+		return &f, content
+	}
+
+	splitContent := strings.SplitN(content, ":", 2)
+
+	if len(splitContent) == 1 {
+		return nil, splitContent[0]
+	}
+
+	// we don't validate here to avoid errors - will fail on eval.
+	f := inputFormat(splitContent[0])
+	return &f, splitContent[1]
 }
 
-func (cc *commonContext) cleanupResult(result interface{}) (interface{}, error) {
-	var finalResult interface{}
-	if cc.raw {
-		switch r := result.(type) {
-		case []byte:
-			finalResult = string(r)
-		default:
-			// otherwise, let's just let JSON-e complain...
-			finalResult = result
-		}
-	} else {
-		var rawBytes []byte
-		switch r := result.(type) {
-		case string:
-			rawBytes = []byte(r)
-		case []byte:
-			rawBytes = r
-		default:
-			return nil, fmt.Errorf("somehow got a non string/byte slice: %q", result)
-		}
-		if err := yaml_ghodss.Unmarshal(rawBytes, &finalResult); err != nil {
+type context struct {
+	original string
+	key      string
+
+	content content
+}
+
+func (c *context) eval() (interface{}, error) {
+	result, err := c.content.load()
+	if err != nil {
+		return nil, err
+	}
+
+	if c.key != "" {
+		return map[string]interface{}{c.key: result}, nil
+	}
+
+	return result, nil
+}
+
+func loadBytes(format inputFormat, data []byte) (interface{}, error) {
+	switch format {
+	case jsonFormat:
+		var result interface{}
+		if err := json.Unmarshal(data, &result); err != nil {
 			return nil, err
 		}
-	}
+		return result, nil
+	case yamlFormat:
+		var result interface{}
+		if err := yaml_ghodss.Unmarshal(data, &result); err != nil {
+			return nil, err
+		}
+		return result, nil
+	case textFormat:
+		return string(data), nil
+	case kvFormat:
+		// TODO unicode?
+		lines := strings.Split(string(data), "\n")
+		result := make(map[string]interface{}, len(lines))
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
 
-	if cc.key != "" {
-		return map[string]interface{}{cc.key: finalResult}, nil
+			splitLine := strings.SplitN(line, " ", 2)
+			if len(splitLine) != 2 {
+				return nil, fmt.Errorf("line not in kv format: %q", line)
+			}
+			result[splitLine[0]] = splitLine[1]
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("format %q not supported", format)
 	}
-
-	return finalResult, nil
 }
 
-type fileContext struct {
-	commonContext
+type fileContent struct {
+	format   inputFormat
 	filename string
 }
 
-func (fc *fileContext) eval() (interface{}, error) {
-	result, err := ioutil.ReadFile(fc.filename)
+func (fc *fileContent) load() (interface{}, error) {
+	resultBytes, err := ioutil.ReadFile(fc.filename)
 	if err != nil {
 		return nil, err
 	}
-
-	return fc.cleanupResult(result)
+	return loadBytes(fc.format, resultBytes)
 }
 
-type stdinContext struct {
-	commonContext
-	filename string
+func (fc *fileContent) metadata() map[string]interface{} {
+	basename := path.Base(fc.filename)
+	return map[string]interface{}{
+		"filename": fc.filename,
+		"basename": basename,
+		"name":     strings.TrimSuffix(basename, filepath.Ext(basename)),
+	}
 }
 
-func (sc *stdinContext) eval() (interface{}, error) {
-	result, err := ioutil.ReadAll(os.Stdin)
+type stdinContent struct {
+	format inputFormat
+}
+
+func (sc *stdinContent) load() (interface{}, error) {
+	resultBytes, err := ioutil.ReadAll(os.Stdin)
 	if err != nil {
 		return nil, err
 	}
-
-	return sc.cleanupResult(result)
+	return loadBytes(sc.format, resultBytes)
 }
 
-type functionContext struct {
-	commonContext
+func (sc *stdinContent) metadata() map[string]interface{} {
+	return map[string]interface{}{}
+}
+
+type functionContent struct {
 	function  string
 	rawOutput bool
 	rawInput  bool
 }
 
-func (fc *functionContext) eval() (interface{}, error) {
+type textContent struct {
+	format inputFormat
+	text   string
+}
+
+func (tc *textContent) load() (interface{}, error) {
+	return loadBytes(tc.format, []byte(tc.text))
+}
+
+func (tc *textContent) metadata() map[string]interface{} {
+	return map[string]interface{}{}
+}
+
+func (fc *functionContent) load() (interface{}, error) {
 	var f interface{}
 	commandArray := strings.Split(fc.function, " ")
 
@@ -243,26 +330,20 @@ func (fc *functionContext) eval() (interface{}, error) {
 		}
 	}
 
-	return fc.cleanupResult(jsone_interpreter.WrapFunction(f))
+	return jsone_interpreter.WrapFunction(f), nil
 }
 
-type textContext struct {
-	commonContext
-	text string
+func (fc *functionContent) metadata() map[string]interface{} {
+	return map[string]interface{}{}
 }
 
-func (tc *textContext) eval() (interface{}, error) {
-	return tc.cleanupResult(tc.text)
+type listContent struct {
+	contexts     []context
+	showMetadata bool
+	childFormat  inputFormat
 }
 
-type listContext struct {
-	commonContext
-	contexts    []context
-	metadata    bool
-	rawChildren bool
-}
-
-func (lc *listContext) eval() (interface{}, error) {
+func (lc *listContent) load() (interface{}, error) {
 	outputList := make([]interface{}, 0, len(lc.contexts))
 
 	for _, context := range lc.contexts {
@@ -271,7 +352,7 @@ func (lc *listContext) eval() (interface{}, error) {
 			return nil, err
 		}
 
-		if !lc.metadata {
+		if !lc.showMetadata {
 			outputList = append(outputList, result)
 			continue
 		}
@@ -279,16 +360,15 @@ func (lc *listContext) eval() (interface{}, error) {
 		metadataResult := map[string]interface{}{
 			"content": result,
 		}
-		if fc, ok := context.(*fileContext); ok {
-			basename := path.Base(fc.filename)
-			metadataResult["filename"] = fc.filename
-			metadataResult["basename"] = basename
-			metadataResult["name"] = strings.TrimSuffix(basename, filepath.Ext(basename))
-		}
+		mergo.Merge(&metadataResult, context.content.metadata())
 		outputList = append(outputList, metadataResult)
 	}
 
-	return lc.cleanupResult(outputList)
+	return outputList, nil
+}
+
+func (lc *listContent) metadata() map[string]interface{} {
+	return map[string]interface{}{}
 }
 
 func castToStrings(slice []interface{}) ([]string, error) {

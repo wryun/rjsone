@@ -59,8 +59,9 @@ type arguments struct {
 	contexts     []context
 }
 
-type context interface {
-	eval() (interface{}, error)
+type content interface {
+	load() (interface{}, error)
+	metadata() map[string]interface{}
 }
 
 func main() {
@@ -189,7 +190,7 @@ func run(l *log.Logger, args arguments) (finalError error) {
 func loadContext(contexts []context, deepMerge bool) (map[string]interface{}, error) {
 	finalContext := make(map[string]interface{})
 
-	for i, context := range contexts {
+	for _, context := range contexts {
 		untypedNewContext, err := context.eval()
 		if err != nil {
 			return nil, err
@@ -197,7 +198,7 @@ func loadContext(contexts []context, deepMerge bool) (map[string]interface{}, er
 
 		newContext, ok := untypedNewContext.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("context at position %d had no top level keys: %q", i, untypedNewContext)
+			return nil, fmt.Errorf("context %s had no top level keys: %q", context.original, untypedNewContext)
 		}
 
 		if deepMerge {
