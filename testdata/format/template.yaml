@@ -1,0 +1,6 @@
+toplevel:
+  - ${foojson}
+  - ${fooyaml}
+  - ${fookv}
+# Can't have text at top level
+textinsert: ${bar}
