@@ -165,6 +165,9 @@ func run(l *log.Logger, args arguments) (finalError error) {
 
 		if args.yaml {
 			err = encoder.Encode(output)
+			if err != nil {
+				return err
+			}
 		} else {
 			var byteOutput []byte
 			if args.indentation == 0 {
