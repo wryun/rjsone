@@ -91,7 +91,7 @@ func parseContent(content string, lc *listContent) content {
 	case strings.HasPrefix(data, "+"):
 		return &textContent{format: format, text: data[1:]}
 	case data == "-":
-    return &stdinContent{format: format}
+		return &stdinContent{format: format}
 	case strings.HasPrefix(data, "--"):
 		return &functionContent{rawInput: format == textFormat, rawOutput: true, function: data[2:]}
 	case strings.HasPrefix(data, "-"):
@@ -260,6 +260,9 @@ func (fc *functionContent) load() (interface{}, error) {
 	if fc.rawInput && fc.rawOutput {
 		f = func(args []interface{}, stdin string) (string, error) {
 			stringArgs, err := castToStrings(args)
+			if err != nil {
+				return "", err
+			}
 			extendedCommandArray := append(commandArray, stringArgs...)
 			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
 			command.Stderr = os.Stderr
@@ -273,6 +276,9 @@ func (fc *functionContent) load() (interface{}, error) {
 	} else if fc.rawInput {
 		f = func(args []interface{}, stdin string) (interface{}, error) {
 			stringArgs, err := castToStrings(args)
+			if err != nil {
+				return "", err
+			}
 			extendedCommandArray := append(commandArray, stringArgs...)
 			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
 			command.Stderr = os.Stderr
@@ -297,6 +303,9 @@ func (fc *functionContent) load() (interface{}, error) {
 			}
 
 			stringArgs, err := castToStrings(args)
+			if err != nil {
+				return "", err
+			}
 			extendedCommandArray := append(commandArray, stringArgs...)
 			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
 			command.Stderr = os.Stderr
@@ -312,6 +321,9 @@ func (fc *functionContent) load() (interface{}, error) {
 			}
 
 			stringArgs, err := castToStrings(args)
+			if err != nil {
+				return "", err
+			}
 			extendedCommandArray := append(commandArray, stringArgs...)
 			command := exec.Command(extendedCommandArray[0], extendedCommandArray[1:]...)
 			command.Stderr = os.Stderr
@@ -360,7 +372,10 @@ func (lc *listContent) load() (interface{}, error) {
 		metadataResult := map[string]interface{}{
 			"content": result,
 		}
-		mergo.Merge(&metadataResult, context.content.metadata())
+		err = mergo.Merge(&metadataResult, context.content.metadata())
+		if err != nil {
+			return nil, err
+		}
 		outputList = append(outputList, metadataResult)
 	}
 
@@ -374,11 +389,11 @@ func (lc *listContent) metadata() map[string]interface{} {
 func castToStrings(slice []interface{}) ([]string, error) {
 	result := make([]string, len(slice))
 	for i, v := range slice {
-		if s, ok := v.(string); !ok {
+		s, ok := v.(string)
+		if !ok {
 			return nil, errors.New("function command line arguments must be strings (use stdin or $json)")
-		} else {
-			result[i] = s
 		}
+		result[i] = s
 	}
 	return result, nil
 }
