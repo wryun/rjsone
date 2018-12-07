@@ -83,7 +83,7 @@ things (e.g. Kubernetes, CloudFormation, ...), and JSON-e is one of the
 few languages that is also valid YAML/JSON, unlike the common option of
 hijacking languages designed for plain text (or HTML) templating. If your
 template is valid YAML/JSON, your editor can help you out with syntax
-highlighting, and the after you apply the template you will always have
+highlighting, and after you apply the template you will always have
 valid YAML/JSON.
 
 I also want to be 'declarative configuration language' agnostic
@@ -91,8 +91,8 @@ I also want to be 'declarative configuration language' agnostic
 
 Before I discovered JSON-e, I wrote
 [o-stache](https://github.com/wryun/ostache/). There are a
-list of other options there, the most prominent of which is
-[Jsonnet](http://jsonnet.org/).
+list of other structured templating options there, the most
+prominent of which is [Jsonnet](http://jsonnet.org/).
 
 # Basic usage example
 
