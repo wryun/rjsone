@@ -6,7 +6,7 @@
 It's a safe and easy way to have templates of moderate complexity
 for configuration as code 'languages' like Kubernetes and CloudFormation.
 
-    Usage: rjsone [options] [[key:[:]][+]contextfile ...]
+    Usage: rjsone [options] [context ...]
       -d    performs a deep merge of contexts
       -i int
             indentation of JSON output; 0 means no pretty-printing (default 2)
@@ -19,31 +19,55 @@ for configuration as code 'languages' like Kubernetes and CloudFormation.
 
 Context is usually provided by a list of arguments. By default,
 these are interpreted as files. Data is loaded as YAML/JSON by default
-and merged into the main context. If the 'filename' begins with a '+',
-the rest of the argument is interpreted as a raw string.
+and merged into the main context. If the 'filename' begins with a `+`,
+the rest of the argument is interpreted as a raw string rather than
+reading the file. For example:
 
-You can specify a particular context key to load a YAML/JSON
-file into using keyname:filename.yaml; if you specify two colons
-(i.e. keyname::filename.yaml) it will load it as a raw string.
-When duplicate keys are found, later entries replace earlier
-at the top level only (no multi-level merging), unless the '-d' flag
-is passed to perform deep merging.
+    rjsone -t template.yaml context.yaml '+{"foo": 1}'
 
-You can also use keyname:.. (or keyname::..) to indicate that subsequent
-entries without keys should be loaded as a list element into that key. If you
-instead use 'keyname:...', metadata information is loaded as well
-(filename, basename, content).
+When duplicate keys are found, later entries replace earlier at the
+top level only unless the `-d` flag is passed to perform deep merging.
 
-For complex applications, single argument functions can be added by prefixing
-the filename with a '-' (or a '--' for raw string input). For example:
+You can specify a particular context key to load a YAML/JSON file into
+using `keyname:filename.yaml`. You can also use `keyname:..` to indicate
+that subsequent entries without keys should be loaded as a list element
+into that key. If you instead use `keyname:...`, metadata information is
+loaded as well and each list element is an object containing `{filename,
+basename, content}`.
+
+When loading the context, the default input format is YAML but you can
+also use JSON, plain text, and `kv` (key value pairs, space separated,
+as used by bazel and many unix tools). To specify the format, rather
+than using a `:` you use `:format:`. For example:
+
+    :yaml:ctx.yaml :kv:ctx.kv :json:ctx.json mykey:text:ctx.txt
+
+Note that you must specify a key name under which to load the plain text
+file, since it cannot define keys (i.e. is a plain text string). Also,
+although the default format is yaml, the default format with `::` is
+text. So the following equivalencies hold:
+
+    mykey::context.txt == mykey:text:context.txt
+    context.yaml == :context.yaml == :yaml:context.yaml
+
+A common pattern, therefore, is to provide plain text arguments to
+the template:
+
+    rjsone -t template.yaml env::+production context.yaml
+
+For complex applications, single argument functions can be added by
+prefixing the filename with a `-` (or a `--` for raw string input). For
+example:
 
     b64decode::--'base64 -d'
 
-This adds a base64 decode function to the context which accepts an array
-(command line arguments) and string (stdin) as input and outputs a string.
-For example, you could use this function like b64decode([], 'Zm9vCg==').
-Conversely, if you use :-, your command must accept JSON as stdin and
-output JSON or YAML.
+This adds a base64 decode function to the context which accepts two
+arguments as input, an array (command line arguments) and string (stdin),
+and outputs a string. In your template, you would use this function by
+like `b64decode([], 'Zm9vCg==')`. As with before, you can use format
+specifiers (:- is yaml on both sides for the default behaviour, and
+you can explicitly specify kv/json/text/yaml between both `::` and
+`--`).
 
 # Getting it
 
@@ -54,18 +78,20 @@ build it yourself:
 
 # Rationale
 
-I often want to template JSON/YAML for declarative
-infrastructure as code things (e.g. Kubernetes, CloudFormation, ...),
-and JSON-e is one of the few languages that is also valid YAML/JSON,
-unlike the common option of hijacking languages designed for plain text
-(or HTML) templating. If your template is valid YAML/JSON, your editor can
-help you out with syntax highlighting, and the after you apply the
-template you will always have valid YAML/JSON.
+I often want to template JSON/YAML for declarative infrastructure as code
+things (e.g. Kubernetes, CloudFormation, ...), and JSON-e is one of the
+few languages that is also valid YAML/JSON, unlike the common option of
+hijacking languages designed for plain text (or HTML) templating. If your
+template is valid YAML/JSON, your editor can help you out with syntax
+highlighting, and the after you apply the template you will always have
+valid YAML/JSON.
 
 I also want to be 'declarative configuration language' agnostic
 (i.e. avoiding Kubernetes specific templating tools...).
 
-Before I discovered JSON-e, I wrote [o-stache](https://github.com/wryun/ostache/). There are a list of other options there, the most prominent of which is
+Before I discovered JSON-e, I wrote
+[o-stache](https://github.com/wryun/ostache/). There are a
+list of other options there, the most prominent of which is
 [Jsonnet](http://jsonnet.org/).
 
 # Basic usage example
